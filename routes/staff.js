@@ -15,6 +15,7 @@ const {
   fmtTimeLabel,
 } = require('../lib/util');
 const { currentStatus, groupHoursByDate, eventsForUser } = require('../lib/timesheet');
+const { holidayBalance } = require('../lib/holiday');
 
 module.exports = function (router) {
   // ---------------- Dashboard / Clock ----------------
@@ -31,7 +32,7 @@ module.exports = function (router) {
     const shiftHtml = todaysShifts.length
       ? todaysShifts
           .map(
-            (s) => `<li><strong>${escapeHtml(s.start)}–${escapeHtml(s.end)}</strong> · ${escapeHtml(s.role)}${s.notes ? ` — <span class="muted">${escapeHtml(s.notes)}</span>` : ''}</li>`
+            (s) => `<li><strong>${escapeHtml(s.start)}–${escapeHtml(s.end)}</strong> · ${escapeHtml(s.role)}${s.breakMinutes ? ` · ${s.breakMinutes} min unpaid break` : ''}${s.notes ? ` — <span class="muted">${escapeHtml(s.notes)}</span>` : ''}</li>`
           )
           .join('')
       : '<li class="muted">No shift scheduled today.</li>';
@@ -88,7 +89,7 @@ module.exports = function (router) {
       for (const wk of Object.keys(byWeek).sort()) {
         const rows = byWeek[wk]
           .map(
-            (s) => `<li><strong>${escapeHtml(dayLabel(s.date))}</strong><br>${escapeHtml(s.start)}–${escapeHtml(s.end)} · ${escapeHtml(s.role)}${s.notes ? `<br><span class="muted">${escapeHtml(s.notes)}</span>` : ''}</li>`
+            (s) => `<li><strong>${escapeHtml(dayLabel(s.date))}</strong><br>${escapeHtml(s.start)}–${escapeHtml(s.end)} · ${escapeHtml(s.role)}${s.breakMinutes ? ` · ${s.breakMinutes} min unpaid break` : ''}${s.notes ? `<br><span class="muted">${escapeHtml(s.notes)}</span>` : ''}</li>`
           )
           .join('');
         body += `<div class="card"><h2>Week of ${escapeHtml(fullDateLabel(wk))}</h2><ul class="list-plain">${rows}</ul></div>`;
@@ -115,8 +116,12 @@ module.exports = function (router) {
         `<tr><td>${escapeHtml(dayLabel(date))}</td><td class="text-right">${hrs > 0 ? fmtHours(hrs) + ' hrs' : '<span class="muted">—</span>'}</td></tr>`
       );
     }
+    const isSalary = ctx.user.payType === 'salary';
     const rate = ctx.user.hourlyRate || 0;
     const est = total * rate;
+    const payNote = isSalary
+      ? `You're on a fixed annual salary of £${(ctx.user.annualSalary || 0).toLocaleString('en-GB')} — the hours above are for reference and don't change your pay.`
+      : `Estimated pay at £${rate.toFixed(2)}/hr: <strong>£${est.toFixed(2)}</strong> (before tax/deductions)`;
 
     const body = `
       <div class="page-head"><h1>My timesheet</h1></div>
@@ -133,7 +138,7 @@ module.exports = function (router) {
             <tfoot><tr><td>Total</td><td class="text-right">${fmtHours(total)} hrs</td></tr></tfoot>
           </table>
         </div>
-        <p class="muted" style="margin-top:0.75rem;">Estimated pay at £${rate.toFixed(2)}/hr: <strong>£${est.toFixed(2)}</strong> (before tax/deductions)</p>
+        <p class="muted" style="margin-top:0.75rem;">${payNote}</p>
       </div>`;
     sendHtml(ctx, { title: 'Timesheet', activePath: '/staff/timesheet', body });
   });
@@ -142,12 +147,8 @@ module.exports = function (router) {
   router.get('/staff/time-off', (ctx) => {
     if (requireRole(ctx, 'staff')) return;
     const data = ctx.db.load();
-    const year = new Date().getFullYear();
-    const approvedDaysUsed = data.timeOffRequests
-      .filter((r) => r.userId === ctx.user.id && r.status === 'approved' && r.type === 'holiday' && new Date(r.startDate).getFullYear() === year)
-      .reduce((sum, r) => sum + daysBetweenInclusive(r.startDate, r.endDate), 0);
-    const allowance = ctx.user.holidayAllowanceDays || 0;
-    const remaining = Math.max(0, allowance - approvedDaysUsed);
+    const isHourly = ctx.user.payType !== 'salary';
+    const bal = holidayBalance(data, ctx.user, todayISO());
 
     const myRequests = data.timeOffRequests
       .filter((r) => r.userId === ctx.user.id)
@@ -155,30 +156,43 @@ module.exports = function (router) {
 
     const rows = myRequests.length
       ? myRequests
-          .map(
-            (r) => `<li>
+          .map((r) => {
+            const amount =
+              r.type === 'holiday' && isHourly && r.hours
+                ? `${r.hours} hrs`
+                : `${daysBetweenInclusive(r.startDate, r.endDate)} day(s)`;
+            return `<li>
               <div class="row" style="align-items:center;">
                 <div>
                   <strong>${escapeHtml(fullDateLabel(r.startDate))}${r.startDate !== r.endDate ? ` → ${escapeHtml(fullDateLabel(r.endDate))}` : ''}</strong>
-                  <div class="muted">${escapeHtml(r.type)} · ${daysBetweenInclusive(r.startDate, r.endDate)} day(s)${r.reason ? ` — ${escapeHtml(r.reason)}` : ''}</div>
+                  <div class="muted">${escapeHtml(r.type)} · ${amount}${r.reason ? ` — ${escapeHtml(r.reason)}` : ''}</div>
                   ${r.managerNote ? `<div class="muted">Manager note: ${escapeHtml(r.managerNote)}</div>` : ''}
                 </div>
                 <span class="badge badge-${r.status}">${escapeHtml(r.status)}</span>
               </div>
-            </li>`
-          )
+            </li>`;
+          })
           .join('')
       : '<li class="muted">No requests yet.</li>';
 
+    const balanceCard = isHourly
+      ? `<div class="stat-grid">
+          <div class="stat-tile"><div class="num">${fmtHours(bal.remaining)}</div><div class="label">Hours remaining</div></div>
+          <div class="stat-tile"><div class="num">${fmtHours(bal.taken)}</div><div class="label">Hours taken</div></div>
+          <div class="stat-tile"><div class="num">${fmtHours(bal.accrued)}</div><div class="label">Hours accrued so far</div></div>
+        </div>
+        <p class="muted" style="margin-top:0.75rem;">You accrue holiday at 12.07% of hours worked, for the holiday
+          year running ${escapeHtml(fullDateLabel(bal.yearStart))} to ${escapeHtml(fullDateLabel(bal.yearEnd))}.</p>`
+      : `<div class="stat-grid">
+          <div class="stat-tile"><div class="num">${Math.round(bal.remaining * 10) / 10}</div><div class="label">Days remaining</div></div>
+          <div class="stat-tile"><div class="num">${bal.taken}</div><div class="label">Days used</div></div>
+          <div class="stat-tile"><div class="num">${bal.accrued}</div><div class="label">Annual allowance</div></div>
+        </div>
+        <p class="muted" style="margin-top:0.75rem;">Holiday year: ${escapeHtml(fullDateLabel(bal.yearStart))} to ${escapeHtml(fullDateLabel(bal.yearEnd))}.</p>`;
+
     const body = `
       <div class="page-head"><h1>Time off</h1></div>
-      <div class="card">
-        <div class="stat-grid">
-          <div class="stat-tile"><div class="num">${remaining}</div><div class="label">Days remaining</div></div>
-          <div class="stat-tile"><div class="num">${approvedDaysUsed}</div><div class="label">Days used (${year})</div></div>
-          <div class="stat-tile"><div class="num">${allowance}</div><div class="label">Annual allowance</div></div>
-        </div>
-      </div>
+      <div class="card">${balanceCard}</div>
       <div class="card">
         <h2>Request time off</h2>
         <form method="POST" action="/staff/time-off" class="stack">
@@ -197,6 +211,11 @@ module.exports = function (router) {
               <input type="date" name="endDate" required value="${addDays(todayISO(), 7)}">
             </label>
           </div>
+          ${isHourly ? `<label>Hours to book off
+            <input type="number" name="hours" min="0" step="0.5" placeholder="e.g. 16 for two 8-hour shifts">
+          </label>
+          <p class="muted mt-0">Since your hours vary week to week, let us know how many paid hours this covers —
+            only needed for Holiday requests, we'll use it to deduct from your accrued balance.</p>` : ''}
           <label>Reason (optional)
             <textarea name="reason" placeholder="Let your manager know any details..."></textarea>
           </label>
@@ -212,7 +231,7 @@ module.exports = function (router) {
 
   router.post('/staff/time-off', (ctx) => {
     if (requireRole(ctx, 'staff')) return;
-    const { type, startDate, endDate, reason } = ctx.body || {};
+    const { type, startDate, endDate, reason, hours } = ctx.body || {};
     if (!startDate || !endDate || startDate > endDate) {
       redirect(ctx.res, '/staff/time-off', { type: 'error', message: 'Please provide a valid date range.' });
       return;
@@ -224,6 +243,7 @@ module.exports = function (router) {
       type: ['holiday', 'sick', 'other'].includes(type) ? type : 'holiday',
       startDate,
       endDate,
+      hours: ctx.user.payType !== 'salary' ? Math.max(0, Number(hours) || 0) : null,
       reason: (reason || '').slice(0, 500),
       status: 'pending',
       requestedAt: nowISO(),

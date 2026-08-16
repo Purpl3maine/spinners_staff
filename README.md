@@ -66,18 +66,47 @@ like a native app.
 
 **Managers**
 - Dashboard: who's clocked in right now, pending requests, quick links
-- Add/edit staff (position, hourly rate, holiday allowance), deactivate leavers,
-  and reset a staff member's password if they're locked out
+- Add/edit staff: set them up as **hourly** (with an hourly rate) or on a
+  **fixed salary** (with an annual amount) — reset a password, deactivate
+  leavers, and see holiday basis (accrual vs fixed allowance) at a glance
 - Rota builder: a weekly grid, click any cell to add/edit/delete a shift,
   publish the week when it's ready (shifts stay as an internal draft until
-  published — staff only see published shifts). Each row has a "Remove from
-  rota" link for staff you don't need to schedule (e.g. an admin-only
-  account) — it just hides them from the grid, their account keeps working
-  normally, and there's a one-click "+ Add to rota" to bring them back.
+  published — staff only see published shifts). Shifts can include an
+  **unpaid break** (in minutes), which is deducted automatically from that
+  day's paid hours on timesheets. Each row has a "Remove from rota" link for
+  staff you don't need to schedule (e.g. an admin-only account) — it just
+  hides them from the grid, their account keeps working normally, and
+  there's a one-click "+ Add to rota" to bring them back.
 - Approve or deny time-off requests
+- **Holiday page**: everyone's balance at a glance (accrued/allowance, taken,
+  remaining) plus a full log of every holiday request and its outcome
 - Weekly timesheets report per staff member with estimated labour cost
+  (salaried staff show their pro-rated weekly salary instead of hours × rate)
 
 **Everyone** gets an **Account** page (top right) to change their own password.
+
+## How holiday accrual works
+
+Holiday resets every **1 April**. Which model applies depends on how a staff
+member is set up (Staff page → Pay type):
+
+- **Salaried staff** get their full day allowance (e.g. 28 days) available
+  from day one of the holiday year — the classic UK contractual model.
+- **Hourly staff** don't get a fixed allowance. Instead they accrue
+  **12.07% of the hours they actually work**, building up gradually across
+  the year — this is the standard statutory rate for staff whose hours
+  aren't fixed (5.6 weeks' leave ÷ 46.4 working weeks ≈ 12.07%). When they
+  request holiday, they also enter how many hours it covers, which is
+  deducted from their accrued balance. It's floored at 0 rather than going
+  negative if someone takes leave faster than they've accrued it.
+
+⚠️ **Please don't treat this as legal/payroll advice.** Holiday pay rules
+for irregular-hours and part-year workers have real nuance in UK law
+(notably the *Harpur Trust v Brazel* case), and getting this wrong has real
+financial and legal consequences. This implementation is a reasonable,
+transparent best-effort — worth sanity-checking with an accountant or
+payroll advisor before it drives real pay decisions, especially as your
+team grows.
 
 ## Known simplifications (it's a prototype)
 
@@ -88,10 +117,14 @@ knowing about before you rely on this for real payroll or compliance:
   database. Fine for one pub trying this out; it will not hold up to
   concurrent writes at scale or give you backups/history.
 - **Sessions are in-memory** — restarting the server logs everyone out.
-- **No working-time/break rules, overtime, or TOIL logic** — Planday enforces
-  these; this prototype just records clock times.
-- **Holiday balance** is a simple calendar-day count (not pro-rated, doesn't
-  exclude weekends/bank holidays).
+- **No working-time rules, overtime, or TOIL logic** beyond unpaid shift
+  breaks and holiday accrual — Planday enforces more of this; this prototype
+  covers what you asked for first.
+- **Holiday day-counts** (for salaried staff, and in the log) are simple
+  calendar-day counts — they don't exclude weekends or bank holidays.
+- **Hours booked off** for hourly staff's holiday requests are self-reported
+  (staff type in the number), not derived automatically from a fixed working
+  pattern, since their hours vary week to week.
 - **No messaging/newsfeed, shift swaps, document storage, payroll export, or
   reporting/analytics dashboards** — you told me clock in/out, rota, and
   holiday requests mattered most, so I focused there first.

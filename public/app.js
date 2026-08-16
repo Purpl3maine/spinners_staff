@@ -17,4 +17,18 @@
       e.preventDefault();
     }
   });
+
+  // Show/hide fields tagged data-paytype-field="hourly"/"salary" based on a
+  // nearby <select name="payType">, so only the relevant pay fields show.
+  document.querySelectorAll('select[name="payType"]').forEach(function (sel) {
+    var form = sel.closest('form') || document;
+    function update() {
+      var val = sel.value;
+      form.querySelectorAll('[data-paytype-field]').forEach(function (el) {
+        el.style.display = el.getAttribute('data-paytype-field') === val ? '' : 'none';
+      });
+    }
+    sel.addEventListener('change', update);
+    update();
+  });
 })();

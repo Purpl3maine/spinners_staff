@@ -17,6 +17,7 @@ const {
 } = require('../lib/util');
 const { currentStatus, totalHoursInRange } = require('../lib/timesheet');
 const { hashPassword } = require('../lib/db');
+const { holidayBalance } = require('../lib/holiday');
 
 function activeStaff(data) {
   return data.users.filter((u) => u.role === 'staff' && u.active).sort((a, b) => a.name.localeCompare(b.name));
@@ -30,6 +31,14 @@ function rotaStaff(data) {
 
 function hiddenFromRota(data) {
   return activeStaff(data).filter((u) => u.onRota === false);
+}
+
+function payLabel(u) {
+  return u.payType === 'salary' ? `£${(u.annualSalary || 0).toLocaleString('en-GB')}/yr` : `£${(u.hourlyRate || 0).toFixed(2)}/hr`;
+}
+
+function holidaySummaryLabel(u) {
+  return u.payType === 'salary' ? `${u.holidayAllowanceDays || 0} days/yr` : '12.07% accrual';
 }
 
 function weekParam(ctx) {
@@ -101,8 +110,8 @@ module.exports = function (router) {
         (u) => `<tr>
           <td><a href="/manager/staff/${u.id}">${escapeHtml(u.name)}</a><div class="muted">${escapeHtml(u.email)}</div></td>
           <td>${escapeHtml(u.role === 'manager' ? 'Manager' : u.position || '—')}</td>
-          <td>£${(u.hourlyRate || 0).toFixed(2)}/hr</td>
-          <td>${u.holidayAllowanceDays || 0} days</td>
+          <td>${payLabel(u)}</td>
+          <td>${holidaySummaryLabel(u)}</td>
           <td>${u.active ? '<span class="badge badge-approved">Active</span>' : '<span class="badge badge-denied">Inactive</span>'}</td>
         </tr>`
       )
@@ -119,9 +128,20 @@ module.exports = function (router) {
           </div>
           <div class="row">
             <label>Position<input type="text" name="position" placeholder="Bartender" required></label>
-            <label>Hourly rate (£)<input type="number" step="0.01" min="0" name="hourlyRate" value="11.75" required></label>
-            <label>Holiday allowance (days/yr)<input type="number" min="0" name="holidayAllowanceDays" value="28" required></label>
+            <label>Pay type
+              <select name="payType">
+                <option value="hourly" selected>Hourly</option>
+                <option value="salary">Fixed salary</option>
+              </select>
+            </label>
           </div>
+          <div class="row">
+            <div data-paytype-field="hourly"><label>Hourly rate (£)<input type="number" step="0.01" min="0" name="hourlyRate" value="11.75"></label></div>
+            <div data-paytype-field="salary"><label>Annual salary (£)<input type="number" step="100" min="0" name="annualSalary" value="24000"></label></div>
+            <div data-paytype-field="salary"><label>Holiday allowance (days/yr)<input type="number" min="0" name="holidayAllowanceDays" value="28"></label></div>
+          </div>
+          <p class="muted mt-0" data-paytype-field="hourly">Hourly staff accrue holiday automatically — 12.07% of
+            the hours they work — instead of a fixed day allowance. See the Holiday page for balances.</p>
           <label>Temporary password<input type="text" name="password" required value="welcome123"></label>
           <button type="submit" class="btn btn-primary">Add staff member</button>
         </form>
@@ -129,7 +149,7 @@ module.exports = function (router) {
       <div class="card">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Name</th><th>Role</th><th>Rate</th><th>Holiday</th><th>Status</th></tr></thead>
+            <thead><tr><th>Name</th><th>Role</th><th>Pay</th><th>Holiday</th><th>Status</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>
@@ -139,7 +159,7 @@ module.exports = function (router) {
 
   router.post('/manager/staff', (ctx) => {
     if (requireRole(ctx, 'manager')) return;
-    const { name, email, position, hourlyRate, holidayAllowanceDays, password } = ctx.body || {};
+    const { name, email, position, payType, hourlyRate, annualSalary, holidayAllowanceDays, password } = ctx.body || {};
     if (!name || !email || !password) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Name, email and password are required.' });
       return;
@@ -156,6 +176,8 @@ module.exports = function (router) {
       passwordHash: hashPassword(password),
       role: 'staff',
       position: position || 'Staff',
+      payType: payType === 'salary' ? 'salary' : 'hourly',
+      annualSalary: Number(annualSalary) || 0,
       holidayAllowanceDays: Number(holidayAllowanceDays) || 0,
       hourlyRate: Number(hourlyRate) || 0,
       active: true,
@@ -184,9 +206,21 @@ module.exports = function (router) {
           </div>
           <div class="row">
             <label>Position<input type="text" name="position" value="${escapeHtml(u.position || '')}"></label>
-            <label>Hourly rate (£)<input type="number" step="0.01" min="0" name="hourlyRate" value="${u.hourlyRate || 0}"></label>
-            <label>Holiday allowance (days/yr)<input type="number" min="0" name="holidayAllowanceDays" value="${u.holidayAllowanceDays || 0}"></label>
+            <label>Pay type
+              <select name="payType">
+                <option value="hourly" ${u.payType !== 'salary' ? 'selected' : ''}>Hourly</option>
+                <option value="salary" ${u.payType === 'salary' ? 'selected' : ''}>Fixed salary</option>
+              </select>
+            </label>
           </div>
+          <div class="row">
+            <div data-paytype-field="hourly"><label>Hourly rate (£)<input type="number" step="0.01" min="0" name="hourlyRate" value="${u.hourlyRate || 0}"></label></div>
+            <div data-paytype-field="salary"><label>Annual salary (£)<input type="number" step="100" min="0" name="annualSalary" value="${u.annualSalary || 0}"></label></div>
+            <div data-paytype-field="salary"><label>Holiday allowance (days/yr)<input type="number" min="0" name="holidayAllowanceDays" value="${u.holidayAllowanceDays || 0}"></label></div>
+          </div>
+          <p class="muted mt-0" data-paytype-field="hourly">Hourly staff accrue holiday automatically — 12.07% of
+            hours worked — instead of a fixed day allowance.
+            <a href="/manager/holiday">See their balance on the Holiday page →</a></p>
           <label style="flex-direction:row;align-items:center;gap:0.5rem;">
             <input type="checkbox" name="onRota" style="width:auto;" ${u.onRota !== false ? 'checked' : ''}>
             <span>Show on the rota grid</span>
@@ -219,11 +253,13 @@ module.exports = function (router) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
       return;
     }
-    const { name, email, position, hourlyRate, holidayAllowanceDays, onRota } = ctx.body || {};
+    const { name, email, position, payType, hourlyRate, annualSalary, holidayAllowanceDays, onRota } = ctx.body || {};
     if (name) u.name = name;
     if (email) u.email = email;
     u.position = position || u.position;
+    u.payType = payType === 'salary' ? 'salary' : 'hourly';
     u.hourlyRate = Number(hourlyRate) || 0;
+    u.annualSalary = Number(annualSalary) || 0;
     u.holidayAllowanceDays = Number(holidayAllowanceDays) || 0;
     u.onRota = onRota === 'on';
     ctx.db.save(data);
@@ -282,7 +318,7 @@ module.exports = function (router) {
             const shifts = weekShifts.filter((s) => s.userId === u.id && s.date === d);
             const chips = shifts
               .map(
-                (s) => `<a class="shift-chip${s.published ? '' : ' draft'}" href="/manager/rota/shift?id=${s.id}&week=${weekStart}">${escapeHtml(s.start)}–${escapeHtml(s.end)}<small>${escapeHtml(s.role)}${s.published ? '' : ' · draft'}</small></a>`
+                (s) => `<a class="shift-chip${s.published ? '' : ' draft'}" href="/manager/rota/shift?id=${s.id}&week=${weekStart}">${escapeHtml(s.start)}–${escapeHtml(s.end)}<small>${escapeHtml(s.role)}${s.breakMinutes ? ` · ${s.breakMinutes}min break` : ''}${s.published ? '' : ' · draft'}</small></a>`
               )
               .join('');
             return `<td class="rota-cell">${chips}<a class="add-shift-link" href="/manager/rota/shift?userId=${u.id}&date=${d}&week=${weekStart}">+ Add shift</a></td>`;
@@ -375,6 +411,11 @@ module.exports = function (router) {
             <label>End time<input type="time" name="end" required value="${shift ? shift.end : '19:00'}"></label>
           </div>
           <label>Role / section<input type="text" name="role" value="${escapeHtml(shift ? shift.role : u.position || '')}"></label>
+          <label>Unpaid break (minutes)
+            <input type="number" name="breakMinutes" min="0" step="5" value="${shift ? shift.breakMinutes || 0 : 0}">
+          </label>
+          <p class="muted mt-0">Deducted automatically from this day's paid hours on their timesheet — e.g. 30 for
+            a standard half-hour unpaid break. Leave at 0 if there's no unpaid break.</p>
           <label>Notes (optional)<textarea name="notes">${escapeHtml(shift ? shift.notes : '')}</textarea></label>
           <button type="submit" class="btn btn-primary">${shift ? 'Save changes' : 'Add shift'}</button>
         </form>
@@ -390,12 +431,13 @@ module.exports = function (router) {
 
   router.post('/manager/rota/shift', (ctx) => {
     if (requireRole(ctx, 'manager')) return;
-    const { id, userId, date, start, end, role, notes, week } = ctx.body || {};
+    const { id, userId, date, start, end, role, notes, breakMinutes, week } = ctx.body || {};
     const redirectTo = `/manager/rota?week=${week || startOfWeek(todayISO())}`;
     if (!userId || !date || !start || !end || start >= end) {
       redirect(ctx.res, redirectTo, { type: 'error', message: 'Please provide a valid time range (end after start).' });
       return;
     }
+    const breakMins = Math.max(0, Number(breakMinutes) || 0);
     const data = ctx.db.load();
     if (id) {
       const shift = data.shifts.find((s) => s.id === id);
@@ -404,9 +446,10 @@ module.exports = function (router) {
         shift.end = end;
         shift.role = role || shift.role;
         shift.notes = notes || '';
+        shift.breakMinutes = breakMins;
       }
     } else {
-      data.shifts.push({ id: uuid(), userId, date, start, end, role: role || 'Staff', notes: notes || '', published: false });
+      data.shifts.push({ id: uuid(), userId, date, start, end, role: role || 'Staff', notes: notes || '', breakMinutes: breakMins, published: false });
     }
     ctx.db.save(data);
     redirect(ctx.res, redirectTo, { type: 'success', message: 'Shift saved.' });
@@ -462,6 +505,71 @@ module.exports = function (router) {
     redirect(ctx.res, `/manager/rota?week=${week}`, { type: 'success', message: u ? `${u.name} added back to the rota grid.` : 'Staff member not found.' });
   });
 
+  // ---------------- Holiday balances & log ----------------
+  router.get('/manager/holiday', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const today = todayISO();
+    const staff = activeStaff(data);
+
+    const balanceRows = staff
+      .map((u) => {
+        const bal = holidayBalance(data, u, today);
+        const fmt = (n) => (bal.unit === 'days' ? `${Math.round(n * 10) / 10} days` : `${fmtHours(n)} hrs`);
+        return `<tr>
+          <td><a href="/manager/staff/${u.id}">${escapeHtml(u.name)}</a><div class="muted">${escapeHtml(u.position)}</div></td>
+          <td>${u.payType === 'salary' ? 'Salary' : 'Hourly (12.07% accrual)'}</td>
+          <td class="text-right">${fmt(bal.accrued)}</td>
+          <td class="text-right">${fmt(bal.taken)}</td>
+          <td class="text-right"><strong>${fmt(bal.remaining)}</strong></td>
+        </tr>`;
+      })
+      .join('');
+
+    const holidayLog = [...data.timeOffRequests]
+      .filter((r) => r.type === 'holiday')
+      .sort((a, b) => b.startDate.localeCompare(a.startDate))
+      .map((r) => {
+        const u = data.users.find((x) => x.id === r.userId);
+        const amount = u && u.payType !== 'salary' && r.hours ? `${r.hours} hrs` : `${daysBetweenInclusive(r.startDate, r.endDate)} day(s)`;
+        return `<tr>
+          <td>${escapeHtml(u ? u.name : 'Unknown')}</td>
+          <td>${escapeHtml(fullDateLabel(r.startDate))}${r.startDate !== r.endDate ? ` → ${escapeHtml(fullDateLabel(r.endDate))}` : ''}</td>
+          <td>${amount}</td>
+          <td><span class="badge badge-${r.status}">${escapeHtml(r.status)}</span></td>
+        </tr>`;
+      })
+      .join('');
+
+    const yearWindow = staff.length ? holidayBalance(data, staff[0], today) : null;
+
+    const body = `
+      <div class="page-head"><h1>Holiday</h1></div>
+      <div class="card">
+        <h2>Balances</h2>
+        ${yearWindow ? `<p class="muted mt-0">Current holiday year: ${escapeHtml(fullDateLabel(yearWindow.yearStart))} to ${escapeHtml(fullDateLabel(yearWindow.yearEnd))} — resets every 1 April.</p>` : ''}
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Staff</th><th>Basis</th><th class="text-right">Accrued / allowance</th><th class="text-right">Taken</th><th class="text-right">Remaining</th></tr></thead>
+            <tbody>${balanceRows || '<tr><td colspan="5" class="empty-state">No active staff.</td></tr>'}</tbody>
+          </table>
+        </div>
+        <p class="muted" style="margin-top:0.75rem;">Hourly staff accrue 12.07% of hours actually worked so far
+          this holiday year — their "remaining" figure grows as they work more hours. Salaried staff get their
+          full day allowance from day one of the year.</p>
+      </div>
+      <div class="card">
+        <h2>Holiday log</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Staff</th><th>Dates</th><th>Amount</th><th>Status</th></tr></thead>
+            <tbody>${holidayLog || '<tr><td colspan="4" class="empty-state">No holiday requests yet.</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>`;
+    sendHtml(ctx, { title: 'Holiday', activePath: '/manager/holiday', body });
+  });
+
   // ---------------- Time-off requests ----------------
   router.get('/manager/requests', (ctx) => {
     if (requireRole(ctx, 'manager')) return;
@@ -472,11 +580,15 @@ module.exports = function (router) {
 
     function rowFor(r, withActions) {
       const u = data.users.find((x) => x.id === r.userId);
+      const amount =
+        r.type === 'holiday' && u && u.payType !== 'salary' && r.hours
+          ? `${r.hours} hrs`
+          : `${daysBetweenInclusive(r.startDate, r.endDate)} day(s)`;
       return `<li>
         <div class="row" style="align-items:center;">
           <div>
             <strong>${escapeHtml(u ? u.name : 'Unknown')}</strong> — ${escapeHtml(r.type)}
-            <div class="muted">${escapeHtml(fullDateLabel(r.startDate))}${r.startDate !== r.endDate ? ` → ${escapeHtml(fullDateLabel(r.endDate))}` : ''} · ${daysBetweenInclusive(r.startDate, r.endDate)} day(s)</div>
+            <div class="muted">${escapeHtml(fullDateLabel(r.startDate))}${r.startDate !== r.endDate ? ` → ${escapeHtml(fullDateLabel(r.endDate))}` : ''} · ${amount}</div>
             ${r.reason ? `<div class="muted">"${escapeHtml(r.reason)}"</div>` : ''}
           </div>
           ${withActions
@@ -529,10 +641,12 @@ module.exports = function (router) {
     const rows = staff
       .map((u) => {
         const hrs = totalHoursInRange(data, u.id, weekStart, weekEnd);
-        const cost = hrs * (u.hourlyRate || 0);
+        const isSalary = u.payType === 'salary';
+        const cost = isSalary ? (u.annualSalary || 0) / 52 : hrs * (u.hourlyRate || 0);
         grandHours += hrs;
         grandCost += cost;
-        return `<tr><td>${escapeHtml(u.name)}<div class="muted">${escapeHtml(u.position)}</div></td><td class="text-right">${fmtHours(hrs)} hrs</td><td class="text-right">${fmtMoney(cost)}</td></tr>`;
+        const costCell = isSalary ? `${fmtMoney(cost)} <span class="muted">(salaried, pro-rated)</span>` : fmtMoney(cost);
+        return `<tr><td>${escapeHtml(u.name)}<div class="muted">${escapeHtml(u.position)}</div></td><td class="text-right">${fmtHours(hrs)} hrs</td><td class="text-right">${costCell}</td></tr>`;
       })
       .join('');
 
