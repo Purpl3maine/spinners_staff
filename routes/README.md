@@ -70,10 +70,7 @@ like a native app.
   and reset a staff member's password if they're locked out
 - Rota builder: a weekly grid, click any cell to add/edit/delete a shift,
   publish the week when it's ready (shifts stay as an internal draft until
-  published — staff only see published shifts). Each row has a "Remove from
-  rota" link for staff you don't need to schedule (e.g. an admin-only
-  account) — it just hides them from the grid, their account keeps working
-  normally, and there's a one-click "+ Add to rota" to bring them back.
+  published — staff only see published shifts)
 - Approve or deny time-off requests
 - Weekly timesheets report per staff member with estimated labour cost
 

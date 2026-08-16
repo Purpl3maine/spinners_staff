@@ -84,16 +84,6 @@ code { background: #eee; padding: 0.1rem 0.35rem; border-radius: 4px; font-size:
   font-size: 0.8rem;
 }
 .link-btn:hover { background: rgba(255,255,255,0.1); }
-.link-btn-plain {
-  background: none;
-  border: none;
-  color: var(--muted);
-  padding: 0;
-  cursor: pointer;
-  font-size: 0.76rem;
-  text-decoration: underline;
-}
-.link-btn-plain:hover { color: var(--red-500); }
 .inline-form { display: inline; }
 
 .topnav {

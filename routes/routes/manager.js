@@ -22,16 +22,6 @@ function activeStaff(data) {
   return data.users.filter((u) => u.role === 'staff' && u.active).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// Staff shown as rows on the rota grid. onRota defaults to true for anyone
-// who's never had it explicitly set (keeps old data working without a migration).
-function rotaStaff(data) {
-  return activeStaff(data).filter((u) => u.onRota !== false);
-}
-
-function hiddenFromRota(data) {
-  return activeStaff(data).filter((u) => u.onRota === false);
-}
-
 function weekParam(ctx) {
   return ctx.query.week && /^\d{4}-\d{2}-\d{2}$/.test(ctx.query.week) ? startOfWeek(ctx.query.week) : startOfWeek(todayISO());
 }
@@ -159,7 +149,6 @@ module.exports = function (router) {
       holidayAllowanceDays: Number(holidayAllowanceDays) || 0,
       hourlyRate: Number(hourlyRate) || 0,
       active: true,
-      onRota: true,
       createdAt: nowISO(),
     });
     ctx.db.save(data);
@@ -187,13 +176,6 @@ module.exports = function (router) {
             <label>Hourly rate (£)<input type="number" step="0.01" min="0" name="hourlyRate" value="${u.hourlyRate || 0}"></label>
             <label>Holiday allowance (days/yr)<input type="number" min="0" name="holidayAllowanceDays" value="${u.holidayAllowanceDays || 0}"></label>
           </div>
-          <label style="flex-direction:row;align-items:center;gap:0.5rem;">
-            <input type="checkbox" name="onRota" style="width:auto;" ${u.onRota !== false ? 'checked' : ''}>
-            <span>Show on the rota grid</span>
-          </label>
-          <p class="muted mt-0">Turn this off for someone you don't schedule shifts for (e.g. an admin-only
-            account) — they'll disappear from the rota builder but keep everything else: logging in, clocking
-            in/out, and requesting time off.</p>
           <button type="submit" class="btn btn-primary">Save changes</button>
         </form>
         <hr class="sep">
@@ -219,13 +201,12 @@ module.exports = function (router) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
       return;
     }
-    const { name, email, position, hourlyRate, holidayAllowanceDays, onRota } = ctx.body || {};
+    const { name, email, position, hourlyRate, holidayAllowanceDays } = ctx.body || {};
     if (name) u.name = name;
     if (email) u.email = email;
     u.position = position || u.position;
     u.hourlyRate = Number(hourlyRate) || 0;
     u.holidayAllowanceDays = Number(holidayAllowanceDays) || 0;
-    u.onRota = onRota === 'on';
     ctx.db.save(data);
     redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: 'Saved.' });
   });
@@ -265,8 +246,7 @@ module.exports = function (router) {
     const data = ctx.db.load();
     const weekStart = weekParam(ctx);
     const weekEnd = addDays(weekStart, 6);
-    const staff = rotaStaff(data);
-    const hidden = hiddenFromRota(data);
+    const staff = activeStaff(data);
     const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
     const weekShifts = data.shifts.filter((s) => s.date >= weekStart && s.date <= weekEnd);
@@ -288,38 +268,12 @@ module.exports = function (router) {
             return `<td class="rota-cell">${chips}<a class="add-shift-link" href="/manager/rota/shift?userId=${u.id}&date=${d}&week=${weekStart}">+ Add shift</a></td>`;
           })
           .join('');
-        return `<tr><td><strong>${escapeHtml(u.name)}</strong><div class="muted">${escapeHtml(u.position)}</div>
-          <form method="POST" action="/manager/rota/staff/${u.id}/hide" data-confirm="Remove ${escapeHtml(u.name)} from the rota grid? Their account and shifts already assigned are unaffected — you can add them back any time.">
-            <input type="hidden" name="week" value="${weekStart}">
-            <button type="submit" class="link-btn-plain">Remove from rota</button>
-          </form></td>${cells}</tr>`;
+        return `<tr><td><strong>${escapeHtml(u.name)}</strong><div class="muted">${escapeHtml(u.position)}</div></td>${cells}</tr>`;
       })
       .join('');
 
-    const hiddenHtml = hidden.length
-      ? `<div class="card">
-          <h2>Not shown on the rota</h2>
-          <p class="muted">Active staff who are hidden from the grid above — they can still log in, clock in/out, and request time off as normal.</p>
-          <ul class="list-plain">
-            ${hidden
-              .map(
-                (u) => `<li>
-                  <div class="row" style="align-items:center;">
-                    <div><strong>${escapeHtml(u.name)}</strong> <span class="muted">${escapeHtml(u.position)}</span></div>
-                    <form method="POST" action="/manager/rota/staff/${u.id}/show">
-                      <input type="hidden" name="week" value="${weekStart}">
-                      <button type="submit" class="btn btn-sm">+ Add to rota</button>
-                    </form>
-                  </div>
-                </li>`
-              )
-              .join('')}
-          </ul>
-        </div>`
-      : '';
-
     const body = `
-      <div class="page-head"><h1>Rota builder</h1><a class="btn btn-sm" href="/manager/staff">+ Add / manage staff</a></div>
+      <div class="page-head"><h1>Rota builder</h1></div>
       <div class="week-nav">
         <a class="btn btn-sm" href="/manager/rota?week=${addDays(weekStart, -7)}">← Prev week</a>
         <span class="label">${escapeHtml(fullDateLabel(weekStart))} – ${escapeHtml(fullDateLabel(weekEnd))}</span>
@@ -336,8 +290,7 @@ module.exports = function (router) {
             <tbody>${bodyRows}</tbody>
           </table>
         </div>
-      </div>`}
-      ${hiddenHtml}`;
+      </div>`}`;
     sendHtml(ctx, { title: 'Rota builder', activePath: '/manager/rota', body });
   });
 
@@ -436,30 +389,6 @@ module.exports = function (router) {
     });
     ctx.db.save(data);
     redirect(ctx.res, `/manager/rota?week=${weekStart}`, { type: 'success', message: `Published ${count} shift(s) — staff can now see this week.` });
-  });
-
-  router.post('/manager/rota/staff/:id/hide', (ctx) => {
-    if (requireRole(ctx, 'manager')) return;
-    const data = ctx.db.load();
-    const u = data.users.find((x) => x.id === ctx.params.id);
-    const week = (ctx.body && ctx.body.week) || startOfWeek(todayISO());
-    if (u) {
-      u.onRota = false;
-      ctx.db.save(data);
-    }
-    redirect(ctx.res, `/manager/rota?week=${week}`, { type: 'success', message: u ? `${u.name} removed from the rota grid.` : 'Staff member not found.' });
-  });
-
-  router.post('/manager/rota/staff/:id/show', (ctx) => {
-    if (requireRole(ctx, 'manager')) return;
-    const data = ctx.db.load();
-    const u = data.users.find((x) => x.id === ctx.params.id);
-    const week = (ctx.body && ctx.body.week) || startOfWeek(todayISO());
-    if (u) {
-      u.onRota = true;
-      ctx.db.save(data);
-    }
-    redirect(ctx.res, `/manager/rota?week=${week}`, { type: 'success', message: u ? `${u.name} added back to the rota grid.` : 'Staff member not found.' });
   });
 
   // ---------------- Time-off requests ----------------

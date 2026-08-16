@@ -50,7 +50,6 @@ function seedData() {
     holidayAllowanceDays: s.holiday,
     hourlyRate: s.rate,
     active: true,
-    onRota: true,
     createdAt: now,
   }));
 
