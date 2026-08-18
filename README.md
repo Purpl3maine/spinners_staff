@@ -59,6 +59,8 @@ like a native app.
 
 **Staff**
 - Clock in / clock out with a big one-tap button, and see hours worked today
+  — the app checks the phone's location and only allows it within 50 metres
+  of the pub
 - View upcoming published shifts (schedule)
 - View a weekly timesheet of hours worked, with an estimated pay total
 - Request holiday/sick/other leave, see remaining holiday balance, and track
@@ -77,6 +79,9 @@ like a native app.
   staff you don't need to schedule (e.g. an admin-only account) — it just
   hides them from the grid, their account keeps working normally, and
   there's a one-click "+ Add to rota" to bring them back.
+- Each staff member's page has a **manual clock in/out** override — add or
+  remove clock events by hand, no location check. Useful when the location
+  check isn't working for someone, or to fix a mistake.
 - Approve or deny time-off requests
 - **Holiday page**: everyone's balance at a glance (accrued/allowance, taken,
   remaining) plus a full log of every holiday request and its outcome
@@ -107,6 +112,29 @@ financial and legal consequences. This implementation is a reasonable,
 transparent best-effort — worth sanity-checking with an accountant or
 payroll advisor before it drives real pay decisions, especially as your
 team grows.
+
+## Geofenced clock in/out
+
+Staff can only clock in or out while their phone/browser reports a location
+within **50 metres** of the pub. This uses the browser's built-in location
+feature (no app install, no extra permissions beyond the normal "allow this
+site to use your location" prompt) — the location is only checked at the
+moment they tap Clock In/Out, not tracked in the background.
+
+If a staff member declines the location prompt, or their signal is too weak
+to get a fix, they'll see a clear message explaining why it didn't work and
+what to try (allow location access, move near a window, etc.) — they aren't
+just silently blocked.
+
+The pub's coordinates are set in `lib/geo.js` (`PUB_LAT` / `PUB_LNG`) — if
+you ever need to adjust them (e.g. the app is used at a different site) or
+change the 50m radius (`RADIUS_METERS`), that's the one place to edit.
+
+**Note:** phone GPS accuracy varies — indoors or with a weak signal it can
+occasionally be off by tens of metres, which may need a retry near a window
+or door. If it keeps failing for someone, a manager can add the clock
+in/out by hand from that staff member's page (see below) — this skips the
+location check entirely, so use it as a fallback rather than routine.
 
 ## Known simplifications (it's a prototype)
 

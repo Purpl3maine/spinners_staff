@@ -15,7 +15,7 @@ const {
   fmtMoney,
   fmtTimeLabel,
 } = require('../lib/util');
-const { currentStatus, totalHoursInRange } = require('../lib/timesheet');
+const { currentStatus, totalHoursInRange, eventsForUser } = require('../lib/timesheet');
 const { hashPassword } = require('../lib/db');
 const { holidayBalance } = require('../lib/holiday');
 
@@ -196,8 +196,54 @@ module.exports = function (router) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
       return;
     }
+    const status = currentStatus(data, u.id);
+    const recentEvents = eventsForUser(data, u.id)
+      .slice()
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 10);
+    const eventsHtml = recentEvents.length
+      ? recentEvents
+          .map(
+            (e) => `<li>
+              <div class="row" style="align-items:center;">
+                <div>
+                  <span class="badge badge-${e.type}">${e.type === 'in' ? 'Clocked in' : 'Clocked out'}</span>
+                  ${e.source === 'manual' ? '<span class="badge badge-draft">Manual</span>' : ''}
+                  <div class="muted">${escapeHtml(fullDateLabel(e.timestamp.slice(0, 10)))} · ${fmtTimeLabel(e.timestamp)}</div>
+                </div>
+                <form method="POST" action="/manager/staff/${u.id}/clock/${e.id}/delete" data-confirm="Remove this clock ${e.type === 'in' ? 'in' : 'out'} entry? This can't be undone.">
+                  <button type="submit" class="link-btn-plain">Remove</button>
+                </form>
+              </div>
+            </li>`
+          )
+          .join('')
+      : '<li class="muted">No clock events yet.</li>';
+
     const body = `
       <div class="page-head"><h1>${escapeHtml(u.name)}</h1></div>
+      <div class="card">
+        <div class="card-header"><h2>Clock in/out</h2><span class="badge badge-${status.clockedIn ? 'in' : 'out'}">${status.clockedIn ? 'Clocked in' : 'Clocked out'}</span></div>
+        <p class="muted mt-0">Normally staff clock themselves in/out from their phone, which checks they're at the
+          pub. Use this if that's not working for them (e.g. a GPS/location issue) or to fix a mistake — it skips
+          the location check.</p>
+        <form method="POST" action="/manager/staff/${u.id}/clock" class="stack">
+          <div class="row">
+            <label>Type
+              <select name="type">
+                <option value="in">Clock in</option>
+                <option value="out">Clock out</option>
+              </select>
+            </label>
+            <label>Date<input type="date" name="date" required value="${todayISO()}"></label>
+            <label>Time<input type="time" name="time" required value="${new Date().toISOString().slice(11, 16)}"></label>
+          </div>
+          <button type="submit" class="btn">Add manual entry</button>
+        </form>
+        <hr class="sep">
+        <h3 style="margin:0 0 0.5rem;">Recent clock events</h3>
+        <ul class="list-plain">${eventsHtml}</ul>
+      </div>
       <div class="card">
         <form method="POST" action="/manager/staff/${u.id}" class="stack">
           <div class="row">
@@ -282,6 +328,45 @@ module.exports = function (router) {
     u.passwordHash = hashPassword(password);
     ctx.db.save(data);
     redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: `Password reset. Tell ${u.name} their new temporary password.` });
+  });
+
+  router.post('/manager/staff/:id/clock', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    const { type, date, time } = ctx.body || {};
+    if (!['in', 'out'].includes(type) || !date || !time) {
+      redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: 'Please provide a type, date and time.' });
+      return;
+    }
+    data.clockEvents.push({
+      id: uuid(),
+      userId: u.id,
+      type,
+      timestamp: `${date}T${time}:00.000Z`,
+      source: 'manual',
+      addedBy: ctx.user.id,
+    });
+    ctx.db.save(data);
+    redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: `Manual clock ${type === 'in' ? 'in' : 'out'} added for ${u.name}.` });
+  });
+
+  router.post('/manager/staff/:id/clock/:eventId/delete', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    const before = data.clockEvents.length;
+    data.clockEvents = data.clockEvents.filter((e) => !(e.id === ctx.params.eventId && e.userId === ctx.params.id));
+    const removed = data.clockEvents.length < before;
+    ctx.db.save(data);
+    redirect(ctx.res, `/manager/staff/${ctx.params.id}`, {
+      type: removed ? 'success' : 'error',
+      message: removed ? 'Clock event removed.' : 'Clock event not found.',
+    });
   });
 
   router.post('/manager/staff/:id/toggle', (ctx) => {

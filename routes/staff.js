@@ -16,6 +16,7 @@ const {
 } = require('../lib/util');
 const { currentStatus, groupHoursByDate, eventsForUser } = require('../lib/timesheet');
 const { holidayBalance } = require('../lib/holiday');
+const { RADIUS_METERS, checkWithinRadius } = require('../lib/geo');
 
 module.exports = function (router) {
   // ---------------- Dashboard / Clock ----------------
@@ -44,11 +45,14 @@ module.exports = function (router) {
         <div class="clock-status">
           ${status.clockedIn ? `Clocked in since <strong>${fmtTimeLabel(status.since)}</strong> · ${fmtHours(hoursToday)} hrs so far today` : `You're currently <strong>clocked out</strong>${hoursToday > 0 ? ` · ${fmtHours(hoursToday)} hrs worked today` : ''}`}
         </div>
-        <form method="POST" action="/staff/clock">
-          <button type="submit" class="clock-btn ${status.clockedIn ? 'out' : 'in'}">
+        <form method="POST" action="/staff/clock" id="clock-form" data-geo-form>
+          <input type="hidden" name="lat" value="">
+          <input type="hidden" name="lng" value="">
+          <button type="button" id="clock-submit-btn" class="clock-btn ${status.clockedIn ? 'out' : 'in'}">
             ${status.clockedIn ? 'Clock Out' : 'Clock In'}
           </button>
         </form>
+        <p id="clock-geo-status" class="geo-status muted">You need to be at the pub to clock in/out — we'll check your location when you tap the button.</p>
       </div>
       <div class="card">
         <h2>Today's shift</h2>
@@ -59,10 +63,27 @@ module.exports = function (router) {
 
   router.post('/staff/clock', (ctx) => {
     if (requireRole(ctx, 'staff')) return;
+    const { lat, lng } = ctx.body || {};
+    if (lat === undefined || lng === undefined || lat === '' || lng === '') {
+      redirect(ctx.res, '/staff', {
+        type: 'error',
+        message: "We couldn't get your location. Please allow location access for this site and try again.",
+      });
+      return;
+    }
+    const { ok, distance } = checkWithinRadius(lat, lng);
+    if (!ok) {
+      const distanceNote = distance === null ? '' : ` You're currently about ${distance}m away.`;
+      redirect(ctx.res, '/staff', {
+        type: 'error',
+        message: `You need to be within ${RADIUS_METERS}m of the pub to clock in/out.${distanceNote}`,
+      });
+      return;
+    }
     const data = ctx.db.load();
     const status = currentStatus(data, ctx.user.id);
     const type = status.clockedIn ? 'out' : 'in';
-    data.clockEvents.push({ id: uuid(), userId: ctx.user.id, type, timestamp: nowISO() });
+    data.clockEvents.push({ id: uuid(), userId: ctx.user.id, type, timestamp: nowISO(), lat: Number(lat), lng: Number(lng) });
     ctx.db.save(data);
     const msg = type === 'in' ? 'Clocked in. Have a good shift!' : 'Clocked out. Nice work!';
     redirect(ctx.res, '/staff', { type: 'success', message: msg });
