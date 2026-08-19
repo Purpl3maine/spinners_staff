@@ -194,6 +194,16 @@ knowing about before you rely on this for real payroll or compliance:
 - No encryption at rest, no audit log, no GDPR data-export/delete tooling —
   needed before storing real staff data long-term.
 
+## Going live with real staff
+
+Once you're ready to stop testing and hand the app to your actual team, use
+**Staff → Danger zone → Reset for go-live** (owner only). Tick which
+account(s) to keep — normally just your own — and it removes everyone else
+and clears every shift, clock in/out record, and time-off request, so
+staff start with a clean slate. Type `RESET` to confirm; **this can't be
+undone**, so double-check the tick boxes before submitting. After that, add
+your real team via **Staff → Add a staff member** as normal.
+
 ## From prototype to production
 
 If a trial with real staff goes well, moving this from "runs on my laptop" to

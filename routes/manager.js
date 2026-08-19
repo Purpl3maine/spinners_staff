@@ -166,8 +166,72 @@ module.exports = function (router) {
             <tbody>${rows}</tbody>
           </table>
         </div>
-      </div>`;
+      </div>
+      ${ctx.user.role === 'owner' ? `<div class="card" style="border-color:var(--red-500);">
+        <h2>Danger zone</h2>
+        <p class="muted mt-0">Clear out test data before you start onboarding real staff.</p>
+        <a class="btn btn-danger" href="/manager/reset">Reset for go-live →</a>
+      </div>` : ''}`;
     sendHtml(ctx, { title: 'Staff', activePath: '/manager/staff', body });
+  });
+
+  // ---------------- Reset for go-live (owner only) ----------------
+  router.get('/manager/reset', (ctx) => {
+    if (requireRole(ctx, 'owner')) return;
+    const data = ctx.db.load();
+    const users = [...data.users].sort((a, b) => a.name.localeCompare(b.name));
+    const rows = users
+      .map(
+        (u) => `<label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal;">
+          <input type="checkbox" name="keep_${u.id}" value="on" style="width:auto;" ${u.id === ctx.user.id ? 'checked' : ''}>
+          <span>${escapeHtml(u.name)} <span class="muted">(${escapeHtml(roleLabel(u))} · ${escapeHtml(u.email)})</span></span>
+        </label>`
+      )
+      .join('');
+
+    const body = `
+      <div class="page-head"><h1>Reset for go-live</h1></div>
+      <div class="card">
+        <p class="muted mt-0">Use this once, when you're ready to stop testing and hand the app to real staff.
+          It permanently deletes every shift, clock in/out record, and time-off request, and removes every
+          account you don't tick below to keep. <strong>This can't be undone</strong> — there's no backup.</p>
+        <form method="POST" action="/manager/reset" class="stack" data-confirm="This will permanently delete all shifts, clock history and time-off requests, and remove every unchecked account below. This can't be undone. Continue?">
+          <div class="stack" style="gap:0.5rem;">
+            <strong>Accounts to keep:</strong>
+            ${rows}
+          </div>
+          <label>Type <strong>RESET</strong> to confirm<input type="text" name="confirm" required placeholder="RESET" autocomplete="off"></label>
+          <button type="submit" class="btn btn-danger">Reset now</button>
+        </form>
+      </div>
+      <a class="btn" href="/manager/staff">← Back</a>`;
+    sendHtml(ctx, { title: 'Reset for go-live', activePath: '/manager/staff', body });
+  });
+
+  router.post('/manager/reset', (ctx) => {
+    if (requireRole(ctx, 'owner')) return;
+    const body = ctx.body || {};
+    if ((body.confirm || '').trim().toUpperCase() !== 'RESET') {
+      redirect(ctx.res, '/manager/reset', { type: 'error', message: 'Type RESET exactly (all caps) to confirm — nothing was changed.' });
+      return;
+    }
+    const data = ctx.db.load();
+    const keepIds = data.users.filter((u) => body[`keep_${u.id}`] === 'on').map((u) => u.id);
+    // Whoever is running the reset can never accidentally remove themselves.
+    if (!keepIds.includes(ctx.user.id)) keepIds.push(ctx.user.id);
+
+    const before = data.users.length;
+    data.users = data.users.filter((u) => keepIds.includes(u.id));
+    const removedCount = before - data.users.length;
+    data.shifts = [];
+    data.clockEvents = [];
+    data.timeOffRequests = [];
+    ctx.db.save(data);
+
+    redirect(ctx.res, '/manager/staff', {
+      type: 'success',
+      message: `Reset complete — kept ${data.users.length} account(s), removed ${removedCount}, and cleared all shifts, clock history and time-off requests.`,
+    });
   });
 
   router.post('/manager/staff', async (ctx) => {
