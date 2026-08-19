@@ -1,7 +1,7 @@
 {
   "name": "The Spinners Staff App",
   "short_name": "The Spinners",
-  "start_url": "/staff",
+  "start_url": "/",
   "display": "standalone",
   "background_color": "#2a3c3b",
   "theme_color": "#2a3c3b",

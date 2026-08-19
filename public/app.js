@@ -67,6 +67,30 @@
     });
   }
 
+  // "Add to Home Screen" nudge: show the right instructions for the device,
+  // hide it entirely if the app is already installed/running standalone,
+  // and remember a dismissal so it doesn't nag every visit.
+  var installTip = document.querySelector('[data-install-tip]');
+  if (installTip) {
+    var standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+    if (standalone || window.navigator.standalone) {
+      installTip.remove();
+    } else {
+      var ua = navigator.userAgent || '';
+      var platform = /iphone|ipad|ipod/i.test(ua) ? 'ios' : /android/i.test(ua) ? 'android' : 'desktop';
+      installTip.querySelectorAll('[data-platform]').forEach(function (el) {
+        el.style.display = el.getAttribute('data-platform') === platform ? '' : 'none';
+      });
+      var dismissBtn = installTip.querySelector('[data-install-tip-dismiss]');
+      if (dismissBtn) {
+        dismissBtn.addEventListener('click', function () {
+          document.cookie = 'pubshift_hide_install_tip=1; Path=/; Max-Age=31536000; SameSite=Lax';
+          installTip.remove();
+        });
+      }
+    }
+  }
+
   // Show/hide fields tagged data-paytype-field="hourly"/"salary" based on a
   // nearby <select name="payType">, so only the relevant pay fields show.
   document.querySelectorAll('select[name="payType"]').forEach(function (sel) {
