@@ -90,6 +90,13 @@ like a native app.
 
 **Everyone** gets an **Account** page (top right) to change their own password.
 
+**Onboarding emails** — when a manager adds a new staff member (or resets
+someone's password), the app can automatically email them their login
+details, so no one has to copy/paste passwords by hand. This is off by
+default and needs a one-time setup — see DEPLOY.md, "Turn on automatic
+onboarding emails." Until that's done, everything works exactly the same,
+you just share the login/password with the new starter yourself.
+
 ## How holiday accrual works
 
 Holiday resets every **1 April**. Which model applies depends on how a staff
@@ -156,10 +163,11 @@ knowing about before you rely on this for real payroll or compliance:
 - **No messaging/newsfeed, shift swaps, document storage, payroll export, or
   reporting/analytics dashboards** — you told me clock in/out, rota, and
   holiday requests mattered most, so I focused there first.
-- **No "forgot password" email flow or self-signup** — staff can change their
-  own password once logged in (Account page), and a manager can reset anyone's
-  password if they're locked out, but there's no email sending configured for
-  a self-service reset link.
+- **No self-service "forgot password" or self-signup** — if a staff member
+  gets locked out, a manager resets their password for them (Staff page).
+  With onboarding emails turned on (see above), that reset can be emailed to
+  them automatically, but there's no flow where staff request their own
+  reset link.
 - **Storage note for hosting**: if you deploy this (see DEPLOY.md), the data
   file needs to live on a persistent volume — otherwise it's wiped on every
   redeploy. The app already looks for `DATA_DIR` or Railway's automatic

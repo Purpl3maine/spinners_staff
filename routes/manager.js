@@ -18,6 +18,7 @@ const {
 const { currentStatus, totalHoursInRange, eventsForUser } = require('../lib/timesheet');
 const { hashPassword } = require('../lib/db');
 const { holidayBalance } = require('../lib/holiday');
+const { isConfigured: emailConfigured, sendEmail, onboardingEmail, passwordResetEmail } = require('../lib/email');
 
 function activeStaff(data) {
   return data.users.filter((u) => u.role === 'staff' && u.active).sort((a, b) => a.name.localeCompare(b.name));
@@ -145,6 +146,7 @@ module.exports = function (router) {
           <label>Temporary password<input type="text" name="password" required value="welcome123"></label>
           <button type="submit" class="btn btn-primary">Add staff member</button>
         </form>
+        <p class="muted mt-0">${emailConfigured() ? 'They’ll automatically be emailed their login details.' : 'Onboarding emails aren’t set up yet — you’ll need to share their login and temporary password directly. See DEPLOY.md to turn this on.'}</p>
       </div>
       <div class="card">
         <div class="table-wrap">
@@ -157,7 +159,7 @@ module.exports = function (router) {
     sendHtml(ctx, { title: 'Staff', activePath: '/manager/staff', body });
   });
 
-  router.post('/manager/staff', (ctx) => {
+  router.post('/manager/staff', async (ctx) => {
     if (requireRole(ctx, 'manager')) return;
     const { name, email, position, payType, hourlyRate, annualSalary, holidayAllowanceDays, password } = ctx.body || {};
     if (!name || !email || !password) {
@@ -185,7 +187,18 @@ module.exports = function (router) {
       createdAt: nowISO(),
     });
     ctx.db.save(data);
-    redirect(ctx.res, '/manager/staff', { type: 'success', message: `${name} added. Share their email and temporary password.` });
+
+    let message = `${name} added.`;
+    if (emailConfigured()) {
+      const { subject, html } = onboardingEmail({ pubName: data.settings.pubName, name, email, password });
+      const result = await sendEmail({ to: email, subject, html });
+      message += result.ok
+        ? ' We’ve emailed them their login details.'
+        : ' We couldn’t send the onboarding email automatically — share their email and temporary password with them directly.';
+    } else {
+      message += ' Share their email and temporary password with them directly.';
+    }
+    redirect(ctx.res, '/manager/staff', { type: 'success', message });
   });
 
   router.get('/manager/staff/:id', (ctx) => {
@@ -281,6 +294,10 @@ module.exports = function (router) {
         <p class="muted">Sets a new temporary password for this account — useful if they've forgotten it. Tell them the new password directly; they can change it themselves afterwards in Account settings.</p>
         <form method="POST" action="/manager/staff/${u.id}/reset-password" class="stack">
           <label>New temporary password<input type="text" name="password" required minlength="6"></label>
+          ${emailConfigured() ? `<label style="flex-direction:row;align-items:center;gap:0.5rem;">
+            <input type="checkbox" name="emailIt" style="width:auto;" checked>
+            <span>Email this to ${escapeHtml(u.email)}</span>
+          </label>` : ''}
           <button type="submit" class="btn">Set new password</button>
         </form>
         <hr class="sep">
@@ -312,11 +329,11 @@ module.exports = function (router) {
     redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: 'Saved.' });
   });
 
-  router.post('/manager/staff/:id/reset-password', (ctx) => {
+  router.post('/manager/staff/:id/reset-password', async (ctx) => {
     if (requireRole(ctx, 'manager')) return;
     const data = ctx.db.load();
     const u = data.users.find((x) => x.id === ctx.params.id);
-    const { password } = ctx.body || {};
+    const { password, emailIt } = ctx.body || {};
     if (!u) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
       return;
@@ -327,7 +344,16 @@ module.exports = function (router) {
     }
     u.passwordHash = hashPassword(password);
     ctx.db.save(data);
-    redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: `Password reset. Tell ${u.name} their new temporary password.` });
+
+    let message = 'Password reset.';
+    if (emailIt === 'on' && emailConfigured()) {
+      const { subject, html } = passwordResetEmail({ pubName: data.settings.pubName, name: u.name, email: u.email, password });
+      const result = await sendEmail({ to: u.email, subject, html });
+      message += result.ok ? ` We’ve emailed ${u.name} their new password.` : ` We couldn’t email it automatically — tell ${u.name} their new temporary password directly.`;
+    } else {
+      message += ` Tell ${u.name} their new temporary password.`;
+    }
+    redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message });
   });
 
   router.post('/manager/staff/:id/clock', (ctx) => {

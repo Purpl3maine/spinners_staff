@@ -98,6 +98,47 @@ Once that's green, `https://staff.spinnersdarwen.co.uk` is live.
 
 ---
 
+## Part 6 — Turn on automatic onboarding emails
+
+Once this is done, adding a staff member automatically emails them their
+login details — no more copying passwords into WhatsApp. It uses a free
+service called **Resend** to actually send the emails, and a small,
+separate part of your `spinnersdarwen.com` email setup so it can't interfere
+with your normal email.
+
+**Why a subdomain?** We'll send from `send.spinnersdarwen.com` rather than
+`spinnersdarwen.com` itself. This keeps it completely separate from your
+regular email — nothing about your day-to-day inbox changes.
+
+1. Go to **[resend.com](https://resend.com)** and sign up for a free
+   account.
+2. In Resend, go to **Domains** → **Add Domain** → enter
+   `send.spinnersdarwen.com` → **Add**.
+3. Resend will show you 2–3 DNS records to add (usually an **MX** record and
+   one or two **TXT** records). Go to wherever `spinnersdarwen.com`'s DNS is
+   managed (same idea as Part 5, but this time for the `.com` domain, which
+   may be a different place to the `.co.uk` one) and add each record exactly
+   as shown — host/name, type, value, and priority if it's the MX record.
+4. Back in Resend, click **Verify DNS records**. This can take anywhere from
+   a few minutes to a few hours.
+5. Once it shows verified, go to **API Keys** → **Create API Key** → give it
+   any name → copy the key it shows you (you'll only see it once).
+6. In Railway: click your service → **Variables** tab → **New Variable**,
+   and add these two:
+   - `RESEND_API_KEY` → paste the key from step 5
+   - `EMAIL_FROM` → `The Spinners <onboarding@send.spinnersdarwen.com>`
+7. Railway redeploys automatically after saving variables. That's it —
+   adding a new staff member (or resetting someone's password, with the
+   "email this to them" box ticked) will now email them automatically.
+
+**Note:** until the domain shows as verified in Resend, it can only send
+test emails to your own Resend signup address — real staff won't receive
+anything yet. And until you've done this at all, adding staff still works
+exactly as before, you'll just see a reminder to share their login details
+yourself.
+
+---
+
 ## What to expect afterwards
 
 - Every time I send you an update, you'll re-upload the changed files to
