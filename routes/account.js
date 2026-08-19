@@ -4,6 +4,7 @@ const { sendHtml, redirect } = require('../lib/respond');
 const { escapeHtml } = require('../lib/util');
 const auth = require('../lib/auth');
 const { hashPassword } = require('../lib/db');
+const { roleLabel, homePathFor } = require('../lib/roles');
 
 module.exports = function (router) {
   router.get('/account', (ctx) => {
@@ -11,12 +12,12 @@ module.exports = function (router) {
       redirect(ctx.res, '/login');
       return;
     }
-    const homePath = ctx.user.role === 'manager' ? '/manager' : '/staff';
+    const homePath = homePathFor(ctx.user);
     const body = `
       <div class="page-head"><h1>My account</h1></div>
       <div class="card">
         <h2>${escapeHtml(ctx.user.name)}</h2>
-        <p class="muted">${escapeHtml(ctx.user.email)} · ${escapeHtml(ctx.user.role === 'manager' ? 'Manager' : ctx.user.position || 'Staff')}</p>
+        <p class="muted">${escapeHtml(ctx.user.email)} · ${escapeHtml(roleLabel(ctx.user))}</p>
       </div>
       <div class="card">
         <h2>Change password</h2>

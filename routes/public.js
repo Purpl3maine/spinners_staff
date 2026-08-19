@@ -3,11 +3,12 @@
 const { sendHtml, redirect } = require('../lib/respond');
 const { escapeHtml, addSetCookie } = require('../lib/util');
 const auth = require('../lib/auth');
+const { homePathFor } = require('../lib/roles');
 
 module.exports = function (router) {
   router.get('/', (ctx) => {
     if (ctx.user) {
-      redirect(ctx.res, ctx.user.role === 'manager' ? '/manager' : '/staff');
+      redirect(ctx.res, homePathFor(ctx.user));
     } else {
       redirect(ctx.res, '/login');
     }
@@ -15,7 +16,7 @@ module.exports = function (router) {
 
   router.get('/login', (ctx) => {
     if (ctx.user) {
-      redirect(ctx.res, ctx.user.role === 'manager' ? '/manager' : '/staff');
+      redirect(ctx.res, homePathFor(ctx.user));
       return;
     }
     const body = `
@@ -34,7 +35,7 @@ module.exports = function (router) {
           </form>
           <div class="demo-box">
             <strong>Demo logins</strong>
-            <div>Manager: <code>manager@pub.local</code> / <code>manager123</code></div>
+            <div>Owner: <code>manager@pub.local</code> / <code>manager123</code></div>
             <div>Staff: <code>sam@pub.local</code> / <code>staff123</code></div>
           </div>
         </div>
@@ -62,7 +63,7 @@ module.exports = function (router) {
             </form>
             <div class="demo-box">
               <strong>Demo logins</strong>
-              <div>Manager: <code>manager@pub.local</code> / <code>manager123</code></div>
+              <div>Owner: <code>manager@pub.local</code> / <code>manager123</code></div>
               <div>Staff: <code>sam@pub.local</code> / <code>staff123</code></div>
             </div>
           </div>
@@ -75,7 +76,7 @@ module.exports = function (router) {
     }
     const token = auth.createSession(user.id);
     addSetCookie(ctx.res, auth.sessionCookieHeader(token));
-    redirect(ctx.res, user.role === 'manager' ? '/manager' : '/staff');
+    redirect(ctx.res, homePathFor(user));
   });
 
   router.post('/logout', (ctx) => {

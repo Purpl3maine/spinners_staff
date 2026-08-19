@@ -19,6 +19,7 @@ const { currentStatus, totalHoursInRange, eventsForUser } = require('../lib/time
 const { hashPassword } = require('../lib/db');
 const { holidayBalance } = require('../lib/holiday');
 const { isConfigured: emailConfigured, sendEmail, onboardingEmail, passwordResetEmail } = require('../lib/email');
+const { roleLabel, canManageUser } = require('../lib/roles');
 
 function activeStaff(data) {
   return data.users.filter((u) => u.role === 'staff' && u.active).sort((a, b) => a.name.localeCompare(b.name));
@@ -110,7 +111,7 @@ module.exports = function (router) {
       .map(
         (u) => `<tr>
           <td><a href="/manager/staff/${u.id}">${escapeHtml(u.name)}</a><div class="muted">${escapeHtml(u.email)}</div></td>
-          <td>${escapeHtml(u.role === 'manager' ? 'Manager' : u.position || '—')}</td>
+          <td>${escapeHtml(u.role === 'staff' ? u.position || '—' : roleLabel(u))}</td>
           <td>${payLabel(u)}</td>
           <td>${holidaySummaryLabel(u)}</td>
           <td>${u.active ? '<span class="badge badge-approved">Active</span>' : '<span class="badge badge-denied">Inactive</span>'}</td>
@@ -136,6 +137,16 @@ module.exports = function (router) {
               </select>
             </label>
           </div>
+          ${ctx.user.role === 'owner' ? `<div class="row">
+            <label>Role
+              <select name="role">
+                <option value="staff" selected>Staff</option>
+                <option value="manager">Manager</option>
+              </select>
+            </label>
+          </div>
+          <p class="muted mt-0">Managers get full access to staff, rota, payroll, requests and holiday — but
+            can't manage other managers. Only you (owner) can do that.</p>` : ''}
           <div class="row">
             <div data-paytype-field="hourly"><label>Hourly rate (£)<input type="number" step="0.01" min="0" name="hourlyRate" value="11.75"></label></div>
             <div data-paytype-field="salary"><label>Annual salary (£)<input type="number" step="100" min="0" name="annualSalary" value="24000"></label></div>
@@ -161,7 +172,7 @@ module.exports = function (router) {
 
   router.post('/manager/staff', async (ctx) => {
     if (requireRole(ctx, 'manager')) return;
-    const { name, email, position, payType, hourlyRate, annualSalary, holidayAllowanceDays, password } = ctx.body || {};
+    const { name, email, position, payType, hourlyRate, annualSalary, holidayAllowanceDays, password, role } = ctx.body || {};
     if (!name || !email || !password) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Name, email and password are required.' });
       return;
@@ -171,12 +182,15 @@ module.exports = function (router) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'A user with that email already exists.' });
       return;
     }
+    // Only an owner can create a manager-level account — anyone else's
+    // submission is forced to plain staff, regardless of what was posted.
+    const assignedRole = ctx.user.role === 'owner' && role === 'manager' ? 'manager' : 'staff';
     data.users.push({
       id: uuid(),
       name,
       email,
       passwordHash: hashPassword(password),
-      role: 'staff',
+      role: assignedRole,
       position: position || 'Staff',
       payType: payType === 'salary' ? 'salary' : 'hourly',
       annualSalary: Number(annualSalary) || 0,
@@ -207,6 +221,10 @@ module.exports = function (router) {
     const u = data.users.find((x) => x.id === ctx.params.id);
     if (!u) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
       return;
     }
     const status = currentStatus(data, u.id);
@@ -272,6 +290,20 @@ module.exports = function (router) {
               </select>
             </label>
           </div>
+          ${ctx.user.role === 'owner' && u.id !== ctx.user.id && u.role !== 'owner'
+            ? `<div class="row">
+                <label>Role
+                  <select name="role">
+                    <option value="staff" ${u.role !== 'manager' ? 'selected' : ''}>Staff</option>
+                    <option value="manager" ${u.role === 'manager' ? 'selected' : ''}>Manager</option>
+                  </select>
+                </label>
+              </div>
+              <p class="muted mt-0">Managers get full access to staff, rota, payroll, requests and holiday — but
+                can't manage other managers.</p>`
+            : u.role !== 'staff'
+              ? `<p class="muted mt-0">Role: <strong>${escapeHtml(roleLabel(u))}</strong>${u.role === 'owner' ? ' — owner-level accounts can only be changed directly, not from this form.' : ''}</p>`
+              : ''}
           <div class="row">
             <div data-paytype-field="hourly"><label>Hourly rate (£)<input type="number" step="0.01" min="0" name="hourlyRate" value="${u.hourlyRate || 0}"></label></div>
             <div data-paytype-field="salary"><label>Annual salary (£)<input type="number" step="100" min="0" name="annualSalary" value="${u.annualSalary || 0}"></label></div>
@@ -300,10 +332,10 @@ module.exports = function (router) {
           </label>` : ''}
           <button type="submit" class="btn">Set new password</button>
         </form>
-        <hr class="sep">
+        ${u.id !== ctx.user.id ? `<hr class="sep">
         <form method="POST" action="/manager/staff/${u.id}/toggle">
           <button type="submit" class="btn ${u.active ? 'btn-danger' : ''}">${u.active ? 'Deactivate' : 'Reactivate'} account</button>
-        </form>
+        </form>` : ''}
       </div>`;
     sendHtml(ctx, { title: u.name, activePath: '/manager/staff', body });
   });
@@ -316,7 +348,11 @@ module.exports = function (router) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
       return;
     }
-    const { name, email, position, payType, hourlyRate, annualSalary, holidayAllowanceDays, onRota } = ctx.body || {};
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    const { name, email, position, payType, hourlyRate, annualSalary, holidayAllowanceDays, onRota, role } = ctx.body || {};
     if (name) u.name = name;
     if (email) u.email = email;
     u.position = position || u.position;
@@ -325,6 +361,10 @@ module.exports = function (router) {
     u.annualSalary = Number(annualSalary) || 0;
     u.holidayAllowanceDays = Number(holidayAllowanceDays) || 0;
     u.onRota = onRota === 'on';
+    // Only an owner can change someone's role, never their own, and never to/from owner via this form.
+    if (ctx.user.role === 'owner' && u.id !== ctx.user.id && u.role !== 'owner' && ['staff', 'manager'].includes(role)) {
+      u.role = role;
+    }
     ctx.db.save(data);
     redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: 'Saved.' });
   });
@@ -336,6 +376,10 @@ module.exports = function (router) {
     const { password, emailIt } = ctx.body || {};
     if (!u) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
       return;
     }
     if (!password || password.length < 6) {
@@ -364,6 +408,10 @@ module.exports = function (router) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
       return;
     }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
     const { type, date, time } = ctx.body || {};
     if (!['in', 'out'].includes(type) || !date || !time) {
       redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: 'Please provide a type, date and time.' });
@@ -385,6 +433,14 @@ module.exports = function (router) {
     if (requireRole(ctx, 'manager')) return;
     const data = ctx.db.load();
     const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
     const before = data.clockEvents.length;
     data.clockEvents = data.clockEvents.filter((e) => !(e.id === ctx.params.eventId && e.userId === ctx.params.id));
     const removed = data.clockEvents.length < before;
@@ -399,11 +455,21 @@ module.exports = function (router) {
     if (requireRole(ctx, 'manager')) return;
     const data = ctx.db.load();
     const u = data.users.find((x) => x.id === ctx.params.id);
-    if (u) {
-      u.active = !u.active;
-      ctx.db.save(data);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
     }
-    redirect(ctx.res, `/manager/staff/${ctx.params.id}`, { type: 'success', message: u && u.active ? 'Account reactivated.' : 'Account deactivated.' });
+    if (u.id === ctx.user.id) {
+      redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: "You can't deactivate your own account." });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    u.active = !u.active;
+    ctx.db.save(data);
+    redirect(ctx.res, `/manager/staff/${ctx.params.id}`, { type: 'success', message: u.active ? 'Account reactivated.' : 'Account deactivated.' });
   });
 
   // ---------------- Rota builder ----------------

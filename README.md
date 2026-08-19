@@ -30,7 +30,7 @@ holiday request) so you can see it in action straight away.
 
 | Role    | Email             | Password  |
 |---------|-------------------|-----------|
-| Manager | manager@pub.local | manager123 |
+| Owner   | manager@pub.local | manager123 |
 | Staff   | sam@pub.local     | staff123   |
 
 (Other seeded staff: priya@pub.local, tom@pub.local, ella@pub.local — all use
@@ -66,11 +66,23 @@ like a native app.
 - Request holiday/sick/other leave, see remaining holiday balance, and track
   request status
 
-**Managers**
+**Managers & the owner** — there are two levels above staff:
+- **Manager**: full day-to-day access — staff, rota, payroll/timesheets,
+  time-off requests, holiday balances. The one thing a manager can't do is
+  manage another manager (or the owner) — no viewing, editing, resetting
+  their password, or deactivating them.
+- **Owner**: everything a manager can do, plus managing manager-level
+  accounts — promoting a staff member to manager, editing or deactivating a
+  manager, and so on. There's meant to be one owner (you) — the "Role"
+  option to make someone a manager only appears on your own account.
+
+Both levels see the same set of pages:
 - Dashboard: who's clocked in right now, pending requests, quick links
 - Add/edit staff: set them up as **hourly** (with an hourly rate) or on a
   **fixed salary** (with an annual amount) — reset a password, deactivate
-  leavers, and see holiday basis (accrual vs fixed allowance) at a glance
+  leavers, and see holiday basis (accrual vs fixed allowance) at a glance.
+  The owner also gets a **Role** option here to make someone a manager (or
+  move a manager back to staff)
 - Rota builder: a weekly grid, click any cell to add/edit/delete a shift,
   publish the week when it's ready (shifts stay as an internal draft until
   published — staff only see published shifts). Shifts can include an
@@ -151,6 +163,11 @@ knowing about before you rely on this for real payroll or compliance:
 - **Storage**: everything lives in a single `data.json` file, not a real
   database. Fine for one pub trying this out; it will not hold up to
   concurrent writes at scale or give you backups/history.
+- **One owner in mind**: the app supports more than one owner-level account
+  in principle, but the UI for promoting someone to owner deliberately
+  isn't there — moving ownership to someone else would need a manual data
+  edit. Fine for a single-pub setup; worth building a proper UI for if that
+  ever needs to change.
 - **Sessions are in-memory** — restarting the server logs everyone out.
 - **No working-time rules, overtime, or TOIL logic** beyond unpaid shift
   breaks and holiday accrual — Planday enforces more of this; this prototype
