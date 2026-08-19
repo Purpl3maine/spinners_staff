@@ -124,6 +124,14 @@ member is set up (Staff page → Pay type):
   deducted from their accrued balance. It's floored at 0 rather than going
   negative if someone takes leave faster than they've accrued it.
 
+**Moving someone over from another system mid-year** (e.g. Planday)? Their
+staff profile has a **Holiday adjustment** field — enter what they're
+already owed there as of today (positive), or how much they've overdrawn
+(negative), and it's added straight on top of what this app works out.
+It's shown separately everywhere a balance appears (their own Time off
+page, and your Holiday page) so it's always clear it's a manual figure,
+not something the app calculated.
+
 ⚠️ **Please don't treat this as legal/payroll advice.** Holiday pay rules
 for irregular-hours and part-year workers have real nuance in UK law
 (notably the *Harpur Trust v Brazel* case), and getting this wrong has real

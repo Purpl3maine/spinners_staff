@@ -196,6 +196,10 @@ module.exports = function (router) {
           .join('')
       : '<li class="muted">No requests yet.</li>';
 
+    const adjustmentNote =
+      bal.adjustment !== 0
+        ? `<p class="muted" style="margin-top:0.75rem;">Includes a manual adjustment of ${bal.adjustment > 0 ? '+' : ''}${isHourly ? fmtHours(bal.adjustment) + ' hrs' : Math.round(bal.adjustment * 10) / 10 + ' days'} set by your manager — usually to carry over a balance from before this app.</p>`
+        : '';
     const balanceCard = isHourly
       ? `<div class="stat-grid">
           <div class="stat-tile"><div class="num">${fmtHours(bal.remaining)}</div><div class="label">Hours remaining</div></div>
@@ -203,13 +207,15 @@ module.exports = function (router) {
           <div class="stat-tile"><div class="num">${fmtHours(bal.accrued)}</div><div class="label">Hours accrued so far</div></div>
         </div>
         <p class="muted" style="margin-top:0.75rem;">You accrue holiday at 12.07% of hours worked, for the holiday
-          year running ${escapeHtml(fullDateLabel(bal.yearStart))} to ${escapeHtml(fullDateLabel(bal.yearEnd))}.</p>`
+          year running ${escapeHtml(fullDateLabel(bal.yearStart))} to ${escapeHtml(fullDateLabel(bal.yearEnd))}.</p>
+        ${adjustmentNote}`
       : `<div class="stat-grid">
           <div class="stat-tile"><div class="num">${Math.round(bal.remaining * 10) / 10}</div><div class="label">Days remaining</div></div>
           <div class="stat-tile"><div class="num">${bal.taken}</div><div class="label">Days used</div></div>
           <div class="stat-tile"><div class="num">${bal.accrued}</div><div class="label">Annual allowance</div></div>
         </div>
-        <p class="muted" style="margin-top:0.75rem;">Holiday year: ${escapeHtml(fullDateLabel(bal.yearStart))} to ${escapeHtml(fullDateLabel(bal.yearEnd))}.</p>`;
+        <p class="muted" style="margin-top:0.75rem;">Holiday year: ${escapeHtml(fullDateLabel(bal.yearStart))} to ${escapeHtml(fullDateLabel(bal.yearEnd))}.</p>
+        ${adjustmentNote}`;
 
     const body = `
       <div class="page-head"><h1>Time off</h1></div>

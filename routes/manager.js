@@ -154,6 +154,13 @@ module.exports = function (router) {
           </div>
           <p class="muted mt-0" data-paytype-field="hourly">Hourly staff accrue holiday automatically — 12.07% of
             the hours they work — instead of a fixed day allowance. See the Holiday page for balances.</p>
+          <div class="row">
+            <div data-paytype-field="hourly"><label>Holiday adjustment (hrs)<input type="number" step="0.1" name="holidayAdjustmentHours" value="0"></label></div>
+            <div data-paytype-field="salary"><label>Holiday adjustment (days)<input type="number" step="0.5" name="holidayAdjustmentDays" value="0"></label></div>
+          </div>
+          <p class="muted mt-0">Moving them over from Planday (or anywhere else) mid-year? Enter their existing
+            holiday balance here — positive if they're owed holiday already, negative if they've taken more than
+            they'd earned there. Leave at 0 for a brand-new starter.</p>
           <label>Temporary password<input type="text" name="password" required value="welcome123"></label>
           <button type="submit" class="btn btn-primary">Add staff member</button>
         </form>
@@ -236,7 +243,19 @@ module.exports = function (router) {
 
   router.post('/manager/staff', async (ctx) => {
     if (requireRole(ctx, 'manager')) return;
-    const { name, email, position, payType, hourlyRate, annualSalary, holidayAllowanceDays, password, role } = ctx.body || {};
+    const {
+      name,
+      email,
+      position,
+      payType,
+      hourlyRate,
+      annualSalary,
+      holidayAllowanceDays,
+      holidayAdjustmentHours,
+      holidayAdjustmentDays,
+      password,
+      role,
+    } = ctx.body || {};
     if (!name || !email || !password) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Name, email and password are required.' });
       return;
@@ -259,6 +278,8 @@ module.exports = function (router) {
       payType: payType === 'salary' ? 'salary' : 'hourly',
       annualSalary: Number(annualSalary) || 0,
       holidayAllowanceDays: Number(holidayAllowanceDays) || 0,
+      holidayAdjustmentHours: Number(holidayAdjustmentHours) || 0,
+      holidayAdjustmentDays: Number(holidayAdjustmentDays) || 0,
       hourlyRate: Number(hourlyRate) || 0,
       active: true,
       onRota: true,
@@ -376,6 +397,14 @@ module.exports = function (router) {
           <p class="muted mt-0" data-paytype-field="hourly">Hourly staff accrue holiday automatically — 12.07% of
             hours worked — instead of a fixed day allowance.
             <a href="/manager/holiday">See their balance on the Holiday page →</a></p>
+          <div class="row">
+            <div data-paytype-field="hourly"><label>Holiday adjustment (hrs)<input type="number" step="0.1" name="holidayAdjustmentHours" value="${u.holidayAdjustmentHours || 0}"></label></div>
+            <div data-paytype-field="salary"><label>Holiday adjustment (days)<input type="number" step="0.5" name="holidayAdjustmentDays" value="${u.holidayAdjustmentDays || 0}"></label></div>
+          </div>
+          <p class="muted mt-0">Use this to carry over a starting balance when moving someone here from another
+            system (e.g. Planday) mid-year — enter what they're owed as of today. Positive if they have holiday
+            still owed from before, negative if they'd already taken more than they'd earned. It's added on top
+            of what this app works out, and shown separately on the Holiday page so it's never hidden.</p>
           <label style="flex-direction:row;align-items:center;gap:0.5rem;">
             <input type="checkbox" name="onRota" style="width:auto;" ${u.onRota !== false ? 'checked' : ''}>
             <span>Show on the rota grid</span>
@@ -416,7 +445,19 @@ module.exports = function (router) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
       return;
     }
-    const { name, email, position, payType, hourlyRate, annualSalary, holidayAllowanceDays, onRota, role } = ctx.body || {};
+    const {
+      name,
+      email,
+      position,
+      payType,
+      hourlyRate,
+      annualSalary,
+      holidayAllowanceDays,
+      holidayAdjustmentHours,
+      holidayAdjustmentDays,
+      onRota,
+      role,
+    } = ctx.body || {};
     if (name) u.name = name;
     if (email) u.email = email;
     u.position = position || u.position;
@@ -424,6 +465,8 @@ module.exports = function (router) {
     u.hourlyRate = Number(hourlyRate) || 0;
     u.annualSalary = Number(annualSalary) || 0;
     u.holidayAllowanceDays = Number(holidayAllowanceDays) || 0;
+    u.holidayAdjustmentHours = Number(holidayAdjustmentHours) || 0;
+    u.holidayAdjustmentDays = Number(holidayAdjustmentDays) || 0;
     u.onRota = onRota === 'on';
     // Only an owner can change someone's role, never their own, and never to/from owner via this form.
     if (ctx.user.role === 'owner' && u.id !== ctx.user.id && u.role !== 'owner' && ['staff', 'manager'].includes(role)) {
@@ -757,10 +800,15 @@ module.exports = function (router) {
       .map((u) => {
         const bal = holidayBalance(data, u, today);
         const fmt = (n) => (bal.unit === 'days' ? `${Math.round(n * 10) / 10} days` : `${fmtHours(n)} hrs`);
+        const adjCell =
+          bal.adjustment === 0
+            ? '<span class="muted">—</span>'
+            : `<span style="color:${bal.adjustment > 0 ? 'var(--green-900)' : 'var(--red-500)'};">${bal.adjustment > 0 ? '+' : ''}${fmt(bal.adjustment)}</span>`;
         return `<tr>
           <td><a href="/manager/staff/${u.id}">${escapeHtml(u.name)}</a><div class="muted">${escapeHtml(u.position)}</div></td>
           <td>${u.payType === 'salary' ? 'Salary' : 'Hourly (12.07% accrual)'}</td>
           <td class="text-right">${fmt(bal.accrued)}</td>
+          <td class="text-right">${adjCell}</td>
           <td class="text-right">${fmt(bal.taken)}</td>
           <td class="text-right"><strong>${fmt(bal.remaining)}</strong></td>
         </tr>`;
@@ -791,13 +839,15 @@ module.exports = function (router) {
         ${yearWindow ? `<p class="muted mt-0">Current holiday year: ${escapeHtml(fullDateLabel(yearWindow.yearStart))} to ${escapeHtml(fullDateLabel(yearWindow.yearEnd))} — resets every 1 April.</p>` : ''}
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Staff</th><th>Basis</th><th class="text-right">Accrued / allowance</th><th class="text-right">Taken</th><th class="text-right">Remaining</th></tr></thead>
-            <tbody>${balanceRows || '<tr><td colspan="5" class="empty-state">No active staff.</td></tr>'}</tbody>
+            <thead><tr><th>Staff</th><th>Basis</th><th class="text-right">Accrued / allowance</th><th class="text-right">Adjustment</th><th class="text-right">Taken</th><th class="text-right">Remaining</th></tr></thead>
+            <tbody>${balanceRows || '<tr><td colspan="6" class="empty-state">No active staff.</td></tr>'}</tbody>
           </table>
         </div>
         <p class="muted" style="margin-top:0.75rem;">Hourly staff accrue 12.07% of hours actually worked so far
           this holiday year — their "remaining" figure grows as they work more hours. Salaried staff get their
-          full day allowance from day one of the year.</p>
+          full day allowance from day one of the year. <strong>Adjustment</strong> is a manual correction set on
+          someone's staff profile — mainly for carrying over a starting balance when moving them here from
+          another system mid-year.</p>
       </div>
       <div class="card">
         <h2>Holiday log</h2>
