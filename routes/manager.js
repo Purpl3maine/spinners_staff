@@ -15,6 +15,8 @@ const {
   fmtHours,
   fmtMoney,
   fmtTimeLabel,
+  nowTimeLabelUK,
+  londonWallTimeToISO,
 } = require('../lib/util');
 const { currentStatus, totalHoursInRange, eventsForUser } = require('../lib/timesheet');
 const { hashPassword } = require('../lib/db');
@@ -538,7 +540,7 @@ module.exports = function (router) {
               </select>
             </label>
             <label>Date<input type="date" name="date" required value="${todayISO()}"></label>
-            <label>Time<input type="time" name="time" required value="${new Date().toISOString().slice(11, 16)}"></label>
+            <label>Time<input type="time" name="time" required value="${nowTimeLabelUK()}"></label>
           </div>
           <button type="submit" class="btn">Add manual entry</button>
         </form>
@@ -778,7 +780,7 @@ module.exports = function (router) {
       id: uuid(),
       userId: u.id,
       type,
-      timestamp: `${date}T${time}:00.000Z`,
+      timestamp: londonWallTimeToISO(date, time),
       source: 'manual',
       addedBy: ctx.user.id,
     });
