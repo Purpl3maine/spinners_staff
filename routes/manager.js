@@ -1113,6 +1113,26 @@ module.exports = function (router) {
     const anyDraft = weekShifts.some((s) => !s.published);
     const anyShift = weekShifts.length > 0;
 
+    // Staff-submitted availability for this week, keyed by userId then date,
+    // so each rota cell can flag it while you're deciding who to schedule.
+    const availabilityByUser = {};
+    (data.availability || [])
+      .filter((a) => a.date >= weekStart && a.date <= weekEnd)
+      .forEach((a) => {
+        (availabilityByUser[a.userId] = availabilityByUser[a.userId] || {})[a.date] = a;
+      });
+
+    function availabilityTag(userId, date) {
+      const a = availabilityByUser[userId] && availabilityByUser[userId][date];
+      if (!a || !a.status) return { cellClass: '', html: '' };
+      const times = a.fromTime || a.toTime ? `<small>${escapeHtml(a.fromTime || '?')}–${escapeHtml(a.toTime || '?')} if needed</small>` : '';
+      const note = a.note ? `<small>${escapeHtml(a.note)}</small>` : '';
+      if (a.status === 'unavailable') {
+        return { cellClass: ' rota-cell-unavailable', html: `<div class="avail-tag avail-no">🚫 Not available${times}${note}</div>` };
+      }
+      return { cellClass: '', html: `<div class="avail-tag avail-yes">✓ Available${times}${note}</div>` };
+    }
+
     const headerRow = `<tr><th>Staff</th>${days.map((d) => `<th>${escapeHtml(dayLabel(d))}</th>`).join('')}</tr>`;
 
     // Group staff by department (in the order departments were created),
@@ -1180,7 +1200,8 @@ module.exports = function (router) {
                     </div>`;
                   })
                   .join('');
-                return `<td class="rota-cell" data-userid="${u.id}" data-date="${d}">${chips}<a class="add-shift-link" href="/manager/rota/shift?userId=${u.id}&date=${d}&week=${weekStart}">+ Add shift</a><button type="button" class="paste-shift-btn" style="display:none;" data-userid="${u.id}" data-date="${d}">📋 Paste shift</button></td>`;
+                const avail = availabilityTag(u.id, d);
+                return `<td class="rota-cell${avail.cellClass}" data-userid="${u.id}" data-date="${d}">${avail.html}${chips}<a class="add-shift-link" href="/manager/rota/shift?userId=${u.id}&date=${d}&week=${weekStart}">+ Add shift</a><button type="button" class="paste-shift-btn" style="display:none;" data-userid="${u.id}" data-date="${d}">📋 Paste shift</button></td>`;
               })
               .join('');
             return `<tr data-user-id="${u.id}" data-department-id="${group.dept ? group.dept.id : ''}"><td class="${accentClass}"><span class="row-drag-handle" draggable="true" title="Drag to reorder">⋮⋮</span><strong>${escapeHtml(u.name)}</strong><div class="muted">${escapeHtml(u.position)}</div>

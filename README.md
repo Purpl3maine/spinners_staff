@@ -71,6 +71,11 @@ like a native app.
   — unassigned shifts anyone can request; your manager approves or declines
   each request, and you'll see the outcome here
 - View a weekly timesheet of hours worked, with an estimated pay total
+- **Set availability** for any week: mark a day Available or Not available,
+  and optionally add the hours you could do if needed plus a note (e.g.
+  "school run until 3pm" or "could do evenings only") — this shows up
+  right on the rota grid when a manager's building shifts, on whichever
+  day(s) it applies to
 - Request holiday/sick/other leave, see remaining holiday balance, and track
   request status
 
@@ -132,6 +137,12 @@ Both levels see the same set of pages:
 - **Print rota**: a "🖨️ Print rota" button on the Rota builder gives you a
   clean, landscape-friendly printout of the week you're viewing — no menus
   or buttons, just who's working when.
+- **Staff availability** shows directly on the rota grid — a green "✓
+  Available" or red "🚫 Not available" tag on the relevant day/person,
+  including any hours-if-needed and notes they added, so you can see it
+  right where you're deciding who to schedule. It's informational only —
+  you can still add a shift on a day someone's marked unavailable if you
+  need to, the app just won't hide that they said they couldn't do it.
 - Each staff member's page has a **manual clock in/out** override — add,
   **edit**, or remove clock events by hand, no location check. Useful when
   the location check isn't working for someone, or to fix a mistake (e.g.

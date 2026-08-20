@@ -241,6 +241,95 @@ module.exports = function (router) {
     });
   });
 
+  // ---------------- Availability ----------------
+  router.get('/staff/availability', (ctx) => {
+    if (requireRole(ctx, 'staff')) return;
+    const data = ctx.db.load();
+    const weekStart = ctx.query.week && /^\d{4}-\d{2}-\d{2}$/.test(ctx.query.week) ? startOfWeek(ctx.query.week) : startOfWeek(todayISO());
+    const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
+    const entries = {};
+    (data.availability || []).forEach((a) => {
+      if (a.userId === ctx.user.id) entries[a.date] = a;
+    });
+
+    const rows = days
+      .map((d) => {
+        const a = entries[d] || {};
+        const status = a.status || '';
+        return `<div class="availability-day">
+          <div class="availability-day-head">${escapeHtml(fullDateLabel(d))}</div>
+          <div class="row">
+            <label>Status
+              <select name="status_${d}">
+                <option value=""${status === '' ? ' selected' : ''}>No preference set</option>
+                <option value="available"${status === 'available' ? ' selected' : ''}>Available</option>
+                <option value="unavailable"${status === 'unavailable' ? ' selected' : ''}>Not available</option>
+              </select>
+            </label>
+            <label>Could start from<input type="time" name="from_${d}" value="${escapeHtml(a.fromTime || '')}"></label>
+            <label>Could finish by<input type="time" name="to_${d}" value="${escapeHtml(a.toTime || '')}"></label>
+          </div>
+          <label>Notes (optional)<input type="text" name="note_${d}" value="${escapeHtml(a.note || '')}" placeholder="e.g. could do evenings only, or free after 3pm"></label>
+        </div>`;
+      })
+      .join('');
+
+    const body = `
+      <div class="page-head"><h1>My availability</h1></div>
+      <div class="week-nav">
+        <a class="btn btn-sm" href="/staff/availability?week=${addDays(weekStart, -7)}">← Prev week</a>
+        <span class="label">${escapeHtml(fullDateLabel(weekStart))} – ${escapeHtml(fullDateLabel(addDays(weekStart, 6)))}</span>
+        <a class="btn btn-sm" href="/staff/availability?week=${addDays(weekStart, 7)}">Next week →</a>
+      </div>
+      <div class="card">
+        <p class="muted mt-0">Let your manager know which days you can and can't work this week — it shows up
+          right on the rota when they're building it. If you're not putting yourself forward for a day but could
+          still help out, leave it as "Not available" and note the hours you could manage instead.</p>
+        <form method="POST" action="/staff/availability" class="stack">
+          <input type="hidden" name="week" value="${weekStart}">
+          ${rows}
+          <button type="submit" class="btn btn-primary">Save availability</button>
+        </form>
+      </div>`;
+    sendHtml(ctx, { title: 'Availability', activePath: '/staff/availability', body });
+  });
+
+  router.post('/staff/availability', (ctx) => {
+    if (requireRole(ctx, 'staff')) return;
+    const reqBody = ctx.body || {};
+    const weekStart =
+      reqBody.week && /^\d{4}-\d{2}-\d{2}$/.test(reqBody.week) ? startOfWeek(reqBody.week) : startOfWeek(todayISO());
+    const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+    const data = ctx.db.load();
+    data.availability = data.availability || [];
+
+    days.forEach((d) => {
+      const status = ['available', 'unavailable'].includes(reqBody[`status_${d}`]) ? reqBody[`status_${d}`] : '';
+      const fromTime = (reqBody[`from_${d}`] || '').trim();
+      const toTime = (reqBody[`to_${d}`] || '').trim();
+      const note = (reqBody[`note_${d}`] || '').trim().slice(0, 300);
+      const existingIdx = data.availability.findIndex((a) => a.userId === ctx.user.id && a.date === d);
+
+      if (!status && !fromTime && !toTime && !note) {
+        // Nothing set for this day — clear any existing entry rather than
+        // leaving a stale one behind.
+        if (existingIdx !== -1) data.availability.splice(existingIdx, 1);
+        return;
+      }
+      const entry = { id: uuid(), userId: ctx.user.id, date: d, status, fromTime, toTime, note, updatedAt: nowISO() };
+      if (existingIdx !== -1) {
+        entry.id = data.availability[existingIdx].id;
+        data.availability[existingIdx] = entry;
+      } else {
+        data.availability.push(entry);
+      }
+    });
+
+    ctx.db.save(data);
+    redirect(ctx.res, `/staff/availability?week=${weekStart}`, { type: 'success', message: 'Availability saved.' });
+  });
+
   // ---------------- Timesheet ----------------
   router.get('/staff/timesheet', (ctx) => {
     if (requireRole(ctx, 'staff')) return;

@@ -261,6 +261,15 @@ th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; colo
 .table-wrap { overflow-x: auto; }
 tfoot td { font-weight: 700; border-top: 2px solid var(--line); border-bottom: none; }
 
+/* ---------- Availability ---------- */
+.availability-day { border: 1px solid var(--line); border-radius: var(--radius); padding: 0.75rem; }
+.availability-day-head { font-weight: 700; margin-bottom: 0.5rem; }
+.avail-tag { font-size: 0.72rem; font-weight: 700; border-radius: 6px; padding: 0.15rem 0.4rem; margin-bottom: 0.25rem; display: block; }
+.avail-tag small { display: block; font-weight: 400; }
+.avail-yes { background: var(--green-100); color: var(--green-900); }
+.avail-no { background: var(--red-100); color: var(--red-500); }
+.rota-cell-unavailable { background: #fdf3f2; }
+
 /* ---------- Rota grid ---------- */
 .rota-grid { border-collapse: collapse; width: 100%; min-width: 720px; }
 .rota-grid th, .rota-grid td { border: 1px solid var(--line); padding: 0.4rem; vertical-align: top; }
