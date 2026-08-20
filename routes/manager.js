@@ -265,7 +265,7 @@ module.exports = function (router) {
         </form>
       </div>
       <a class="btn" href="/manager/staff">← Back to staff</a>`;
-    sendHtml(ctx, { title: 'Departments', activePath: '/manager/staff', body });
+    sendHtml(ctx, { title: 'Departments', activePath: '/manager/departments', body });
   });
 
   router.post('/manager/departments', (ctx) => {
