@@ -16,8 +16,13 @@ module.exports = function (router) {
     const body = `
       <div class="page-head"><h1>My account</h1></div>
       <div class="card">
-        <h2>${escapeHtml(ctx.user.name)}</h2>
-        <p class="muted">${escapeHtml(ctx.user.email)} · ${escapeHtml(roleLabel(ctx.user))}</p>
+        <h2>Your details</h2>
+        <p class="muted mt-0">${escapeHtml(roleLabel(ctx.user))}</p>
+        <form method="POST" action="/account/details" class="stack">
+          <label>Full name<input type="text" name="name" value="${escapeHtml(ctx.user.name)}" required></label>
+          <label>Email<input type="email" name="email" value="${escapeHtml(ctx.user.email)}" required></label>
+          <button type="submit" class="btn btn-primary">Save details</button>
+        </form>
       </div>
       <div class="card">
         <h2>Change password</h2>
@@ -30,6 +35,33 @@ module.exports = function (router) {
       </div>
       <a class="btn" href="${homePath}">← Back</a>`;
     sendHtml(ctx, { title: 'My account', activePath: '/account', body });
+  });
+
+  router.post('/account/details', (ctx) => {
+    if (!ctx.user) {
+      redirect(ctx.res, '/login');
+      return;
+    }
+    const { name, email } = ctx.body || {};
+    const cleanEmail = (email || '').trim().toLowerCase();
+    if (!name || !name.trim()) {
+      redirect(ctx.res, '/account', { type: 'error', message: 'Name is required.' });
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      redirect(ctx.res, '/account', { type: 'error', message: 'Enter a valid email address.' });
+      return;
+    }
+    const data = ctx.db.load();
+    if (data.users.some((u) => u.id !== ctx.user.id && u.email.toLowerCase() === cleanEmail)) {
+      redirect(ctx.res, '/account', { type: 'error', message: 'Another account already uses that email.' });
+      return;
+    }
+    const u = data.users.find((x) => x.id === ctx.user.id);
+    u.name = name.trim();
+    u.email = cleanEmail;
+    ctx.db.save(data);
+    redirect(ctx.res, '/account', { type: 'success', message: 'Details updated.' });
   });
 
   router.post('/account/password', (ctx) => {

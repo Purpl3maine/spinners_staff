@@ -21,8 +21,14 @@ const { holidayBalance } = require('../lib/holiday');
 const { isConfigured: emailConfigured, sendEmail, onboardingEmail, passwordResetEmail } = require('../lib/email');
 const { roleLabel, canManageUser } = require('../lib/roles');
 
+// Anyone who can be scheduled/paid — regular staff and managers (managers
+// often work shifts too, e.g. a duty manager on the bar). The owner is left
+// out here since they're handled separately (own account page) and aren't
+// normally on the payroll/rota list.
 function activeStaff(data) {
-  return data.users.filter((u) => u.role === 'staff' && u.active).sort((a, b) => a.name.localeCompare(b.name));
+  return data.users
+    .filter((u) => (u.role === 'staff' || u.role === 'manager') && u.active)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // Staff shown as rows on the rota grid. onRota defaults to true for anyone
