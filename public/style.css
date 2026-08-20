@@ -14,6 +14,19 @@
   --line: #dde6e5;
   --radius: 14px;
   --shadow: 0 2px 10px rgba(42, 60, 59, 0.1);
+
+  /* Department colour palette — cycled through in order as departments are
+     created (see lib/departments.js). Kept distinct from the semantic
+     badge/status colours above so department colour-coding never gets
+     confused with published/pending/approved states. */
+  --dept-0-bg: #e1ecec; --dept-0-fg: #2a3c3b;
+  --dept-1-bg: #fdf1de; --dept-1-fg: #9c6f2f;
+  --dept-2-bg: #e6e9fb; --dept-2-fg: #3949ab;
+  --dept-3-bg: #fbe7e4; --dept-3-fg: #c0392b;
+  --dept-4-bg: #e0f2f1; --dept-4-fg: #00695c;
+  --dept-5-bg: #f3e5f5; --dept-5-fg: #6a1b9a;
+  --dept-6-bg: #fff3e0; --dept-6-fg: #b15600;
+  --dept-7-bg: #eceff1; --dept-7-fg: #455a64;
 }
 
 * { box-sizing: border-box; }
@@ -252,6 +265,29 @@ tfoot td { font-weight: 700; border-top: 2px solid var(--line); border-bottom: n
 .rota-grid { border-collapse: collapse; width: 100%; min-width: 720px; }
 .rota-grid th, .rota-grid td { border: 1px solid var(--line); padding: 0.4rem; vertical-align: top; }
 .rota-grid th { background: var(--green-100); position: sticky; top: 0; }
+.dept-group-row td { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0.3rem 0.6rem; border: none; }
+.row-drag-handle { cursor: grab; color: var(--muted); margin-right: 0.3rem; user-select: none; }
+.row-drag-handle:active { cursor: grabbing; }
+tr[data-user-id].row-drag-over { outline: 2px dashed var(--green-700); outline-offset: -2px; }
+.dept-badge-0, .dept-row-0 { background: var(--dept-0-bg); color: var(--dept-0-fg); }
+.dept-badge-1, .dept-row-1 { background: var(--dept-1-bg); color: var(--dept-1-fg); }
+.dept-badge-2, .dept-row-2 { background: var(--dept-2-bg); color: var(--dept-2-fg); }
+.dept-badge-3, .dept-row-3 { background: var(--dept-3-bg); color: var(--dept-3-fg); }
+.dept-badge-4, .dept-row-4 { background: var(--dept-4-bg); color: var(--dept-4-fg); }
+.dept-badge-5, .dept-row-5 { background: var(--dept-5-bg); color: var(--dept-5-fg); }
+.dept-badge-6, .dept-row-6 { background: var(--dept-6-bg); color: var(--dept-6-fg); }
+.dept-badge-7, .dept-row-7 { background: var(--dept-7-bg); color: var(--dept-7-fg); }
+.dept-badge-0, .dept-badge-1, .dept-badge-2, .dept-badge-3, .dept-badge-4, .dept-badge-5, .dept-badge-6, .dept-badge-7 {
+  display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em;
+}
+.dept-accent-0 { border-left: 4px solid var(--dept-0-fg); }
+.dept-accent-1 { border-left: 4px solid var(--dept-1-fg); }
+.dept-accent-2 { border-left: 4px solid var(--dept-2-fg); }
+.dept-accent-3 { border-left: 4px solid var(--dept-3-fg); }
+.dept-accent-4 { border-left: 4px solid var(--dept-4-fg); }
+.dept-accent-5 { border-left: 4px solid var(--dept-5-fg); }
+.dept-accent-6 { border-left: 4px solid var(--dept-6-fg); }
+.dept-accent-7 { border-left: 4px solid var(--dept-7-fg); }
 .rota-cell { min-height: 56px; transition: background 0.1s ease; }
 .rota-cell.drag-over { background: var(--green-100); outline: 2px dashed var(--green-700); outline-offset: -2px; }
 .shift-chip-wrap { position: relative; display: flex; align-items: stretch; gap: 0.2rem; margin-bottom: 0.3rem; cursor: grab; }

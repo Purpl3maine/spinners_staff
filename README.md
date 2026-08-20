@@ -101,6 +101,13 @@ Both levels see the same set of pages:
   the week you're viewing) from the Templates card underneath the grid —
   applying a template only fills in shifts for people who don't already
   have one that day, so it's safe to reapply without creating duplicates.
+  **Departments** (Bar, Kitchen, FOH, or whatever you call them) group
+  staff on the rota grid with their own automatic colour — manage them
+  from **Manage departments** (linked from the Staff and Rota pages), then
+  assign each person a department from their staff page. Within a
+  department, drag the **⋮⋮** handle next to someone's name to reorder
+  them (desktop only) — staff can only be reordered within their own
+  department group, not moved between groups this way.
 - Each staff member's page has a **manual clock in/out** override — add or
   remove clock events by hand, no location check. Useful when the location
   check isn't working for someone, or to fix a mistake.

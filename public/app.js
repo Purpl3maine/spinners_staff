@@ -147,8 +147,8 @@
     }
     refreshClipboardUI();
 
-    function postShift(fields, done) {
-      fetch('/manager/rota/shift', {
+    function postShift(fields, done, url) {
+      fetch(url || '/manager/rota/shift', {
         method: 'POST',
         headers: { 'X-Requested-With': 'fetch', 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(fields).toString(),
@@ -191,17 +191,22 @@
       });
     });
 
+    var SHIFT_MIME = 'application/x-pubshift-shift';
+    var STAFFROW_MIME = 'application/x-pubshift-staffrow';
+
     document.querySelectorAll('.shift-chip-wrap[draggable="true"]').forEach(function (wrap) {
       wrap.addEventListener('dragstart', function (e) {
         var raw = wrap.getAttribute('data-shift');
         if (!raw) return;
-        e.dataTransfer.setData('text/plain', raw);
+        e.dataTransfer.setData(SHIFT_MIME, raw);
         e.dataTransfer.effectAllowed = 'move';
+        e.stopPropagation();
       });
     });
 
     document.querySelectorAll('.rota-cell[data-userid]').forEach(function (cell) {
       cell.addEventListener('dragover', function (e) {
+        if (e.dataTransfer.types.indexOf(SHIFT_MIME) === -1) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         cell.classList.add('drag-over');
@@ -210,9 +215,10 @@
         cell.classList.remove('drag-over');
       });
       cell.addEventListener('drop', function (e) {
+        if (e.dataTransfer.types.indexOf(SHIFT_MIME) === -1) return;
         e.preventDefault();
         cell.classList.remove('drag-over');
-        var raw = e.dataTransfer.getData('text/plain');
+        var raw = e.dataTransfer.getData(SHIFT_MIME);
         if (!raw) return;
         var shift;
         try {
@@ -238,6 +244,46 @@
           function () {
             window.location.reload();
           }
+        );
+      });
+    });
+
+    // Drag the ⋮⋮ handle on a staff row to reorder them (within their
+    // department group — dropping onto a row from a different group is a
+    // no-op, enforced server-side too).
+    document.querySelectorAll('tr[data-user-id]').forEach(function (row) {
+      var handle = row.querySelector('.row-drag-handle');
+      if (handle) {
+        handle.addEventListener('dragstart', function (e) {
+          e.dataTransfer.setData(STAFFROW_MIME, row.getAttribute('data-user-id'));
+          e.dataTransfer.effectAllowed = 'move';
+          e.stopPropagation();
+        });
+      }
+      row.addEventListener('dragover', function (e) {
+        if (e.dataTransfer.types.indexOf(STAFFROW_MIME) === -1) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        row.classList.add('row-drag-over');
+      });
+      row.addEventListener('dragleave', function () {
+        row.classList.remove('row-drag-over');
+      });
+      row.addEventListener('drop', function (e) {
+        if (e.dataTransfer.types.indexOf(STAFFROW_MIME) === -1) return;
+        e.preventDefault();
+        row.classList.remove('row-drag-over');
+        var draggedUserId = e.dataTransfer.getData(STAFFROW_MIME);
+        var targetUserId = row.getAttribute('data-user-id');
+        if (!draggedUserId || draggedUserId === targetUserId) return;
+        var rect = row.getBoundingClientRect();
+        var position = e.clientY - rect.top < rect.height / 2 ? 'before' : 'after';
+        postShift(
+          { draggedUserId: draggedUserId, targetUserId: targetUserId, position: position, week: rotaWeek },
+          function () {
+            window.location.reload();
+          },
+          '/manager/rota/staff/reorder'
         );
       });
     });

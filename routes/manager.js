@@ -22,6 +22,7 @@ const { holidayBalance } = require('../lib/holiday');
 const { isConfigured: emailConfigured, sendEmail, onboardingEmail, passwordResetEmail } = require('../lib/email');
 const { roleLabel, canManageUser } = require('../lib/roles');
 const { saveContractFile, absolutePath: contractAbsolutePath, deleteContractFile, deleteAllForUser } = require('../lib/uploads');
+const { PALETTE_SIZE, nextColorIndex } = require('../lib/departments');
 
 const DISCIPLINARY_TYPES = ['Verbal warning', 'Written warning', 'Final written warning', 'Other'];
 
@@ -30,6 +31,22 @@ function fmtFileSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function findDept(data, departmentId) {
+  return departmentId ? (data.departments || []).find((d) => d.id === departmentId) : null;
+}
+
+function deptBadgeHtml(data, departmentId) {
+  const dept = findDept(data, departmentId);
+  if (!dept) return '';
+  return `<span class="dept-badge-${dept.colorIndex % PALETTE_SIZE}">${escapeHtml(dept.name)}</span>`;
+}
+
+function departmentOptionsHtml(data, selectedId) {
+  return (data.departments || [])
+    .map((d) => `<option value="${d.id}" ${d.id === selectedId ? 'selected' : ''}>${escapeHtml(d.name)}</option>`)
+    .join('');
 }
 
 // Anyone who can be scheduled/paid — regular staff and managers (managers
@@ -129,6 +146,7 @@ module.exports = function (router) {
         (u) => `<tr>
           <td><a href="/manager/staff/${u.id}">${escapeHtml(u.name)}</a><div class="muted">${escapeHtml(u.email)}</div></td>
           <td>${escapeHtml(u.role === 'staff' ? u.position || '—' : roleLabel(u))}</td>
+          <td>${deptBadgeHtml(data, u.departmentId) || '<span class="muted">—</span>'}</td>
           <td>${payLabel(u)}</td>
           <td>${holidaySummaryLabel(u)}</td>
           <td>${u.active ? '<span class="badge badge-approved">Active</span>' : '<span class="badge badge-denied">Inactive</span>'}</td>
@@ -137,7 +155,7 @@ module.exports = function (router) {
       .join('');
 
     const body = `
-      <div class="page-head"><h1>Staff</h1></div>
+      <div class="page-head"><h1>Staff</h1><a class="btn btn-sm" href="/manager/departments">Manage departments</a></div>
       <div class="card">
         <h2>Add a staff member</h2>
         <form method="POST" action="/manager/staff" class="stack">
@@ -153,6 +171,15 @@ module.exports = function (router) {
                 <option value="salary">Fixed salary</option>
               </select>
             </label>
+          </div>
+          <div class="row">
+            <label>Department
+              <select name="departmentId">
+                <option value="">— None —</option>
+                ${departmentOptionsHtml(data, null)}
+              </select>
+            </label>
+            <div></div>
           </div>
           ${ctx.user.role === 'owner' ? `<div class="row">
             <label>Role
@@ -186,7 +213,7 @@ module.exports = function (router) {
       <div class="card">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Name</th><th>Role</th><th>Pay</th><th>Holiday</th><th>Status</th></tr></thead>
+            <thead><tr><th>Name</th><th>Role</th><th>Department</th><th>Pay</th><th>Holiday</th><th>Status</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>
@@ -197,6 +224,99 @@ module.exports = function (router) {
         <a class="btn btn-danger" href="/manager/reset">Reset for go-live →</a>
       </div>` : ''}`;
     sendHtml(ctx, { title: 'Staff', activePath: '/manager/staff', body });
+  });
+
+  // ---------------- Departments ----------------
+  router.get('/manager/departments', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const departments = data.departments || [];
+    const memberCount = (deptId) => data.users.filter((u) => u.departmentId === deptId && u.active).length;
+    const rows = departments.length
+      ? departments
+          .map(
+            (d) => `<li>
+              <div class="row" style="align-items:center;">
+                <div>${deptBadgeHtml(data, d.id)} <span class="muted">${memberCount(d.id)} active staff</span></div>
+                <div class="row" style="gap:0.75rem;">
+                  <form method="POST" action="/manager/departments/${d.id}" class="inline-form">
+                    <input type="text" name="name" value="${escapeHtml(d.name)}" required style="width:auto;">
+                    <button type="submit" class="btn btn-sm">Rename</button>
+                  </form>
+                  <form method="POST" action="/manager/departments/${d.id}/delete" data-confirm="Delete the &quot;${escapeHtml(d.name)}&quot; department? Staff in it won't be removed — they'll just show as having no department.">
+                    <button type="submit" class="link-btn-plain">Delete</button>
+                  </form>
+                </div>
+              </div>
+            </li>`
+          )
+          .join('')
+      : '<li class="muted">No departments yet — add one below.</li>';
+    const body = `
+      <div class="page-head"><h1>Departments</h1></div>
+      <div class="card">
+        <p class="muted mt-0">Group staff on the rota by department (e.g. Kitchen, FOH, Bar) — each gets its own
+          colour automatically. Assign a staff member's department from their staff page.</p>
+        <ul class="list-plain">${rows}</ul>
+        <hr class="sep">
+        <form method="POST" action="/manager/departments" class="stack">
+          <label>New department<input type="text" name="name" placeholder="e.g. Kitchen" required></label>
+          <button type="submit" class="btn btn-primary">Add department</button>
+        </form>
+      </div>
+      <a class="btn" href="/manager/staff">← Back to staff</a>`;
+    sendHtml(ctx, { title: 'Departments', activePath: '/manager/staff', body });
+  });
+
+  router.post('/manager/departments', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const { name } = ctx.body || {};
+    if (!name || !name.trim()) {
+      redirect(ctx.res, '/manager/departments', { type: 'error', message: 'Give the department a name.' });
+      return;
+    }
+    const data = ctx.db.load();
+    if (!data.departments) data.departments = [];
+    if (data.departments.some((d) => d.name.toLowerCase() === name.trim().toLowerCase())) {
+      redirect(ctx.res, '/manager/departments', { type: 'error', message: 'A department with that name already exists.' });
+      return;
+    }
+    data.departments.push({ id: uuid(), name: name.trim(), colorIndex: nextColorIndex(data.departments), createdAt: nowISO() });
+    ctx.db.save(data);
+    redirect(ctx.res, '/manager/departments', { type: 'success', message: `"${name.trim()}" added.` });
+  });
+
+  router.post('/manager/departments/:id', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const { name } = ctx.body || {};
+    const data = ctx.db.load();
+    const dept = (data.departments || []).find((d) => d.id === ctx.params.id);
+    if (!dept) {
+      redirect(ctx.res, '/manager/departments', { type: 'error', message: 'Department not found.' });
+      return;
+    }
+    if (!name || !name.trim()) {
+      redirect(ctx.res, '/manager/departments', { type: 'error', message: 'Give the department a name.' });
+      return;
+    }
+    dept.name = name.trim();
+    ctx.db.save(data);
+    redirect(ctx.res, '/manager/departments', { type: 'success', message: 'Department renamed.' });
+  });
+
+  router.post('/manager/departments/:id/delete', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const before = (data.departments || []).length;
+    data.departments = (data.departments || []).filter((d) => d.id !== ctx.params.id);
+    const removed = before > data.departments.length;
+    if (removed) {
+      data.users.forEach((u) => {
+        if (u.departmentId === ctx.params.id) u.departmentId = null;
+      });
+    }
+    ctx.db.save(data);
+    redirect(ctx.res, '/manager/departments', { type: removed ? 'success' : 'error', message: removed ? 'Department deleted.' : 'Department not found.' });
   });
 
   // ---------------- Reset for go-live (owner only) ----------------
@@ -276,6 +396,7 @@ module.exports = function (router) {
       holidayAdjustmentDays,
       password,
       role,
+      departmentId,
     } = ctx.body || {};
     if (!name || !email || !password) {
       redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Name, email and password are required.' });
@@ -289,6 +410,8 @@ module.exports = function (router) {
     // Only an owner can create a manager-level account — anyone else's
     // submission is forced to plain staff, regardless of what was posted.
     const assignedRole = ctx.user.role === 'owner' && role === 'manager' ? 'manager' : 'staff';
+    const validDept = (data.departments || []).some((d) => d.id === departmentId);
+    const maxOrder = data.users.reduce((max, u) => Math.max(max, u.rotaSortOrder || 0), -1);
     data.users.push({
       id: uuid(),
       name,
@@ -296,6 +419,7 @@ module.exports = function (router) {
       passwordHash: hashPassword(password),
       role: assignedRole,
       position: position || 'Staff',
+      departmentId: validDept ? departmentId : null,
       payType: payType === 'salary' ? 'salary' : 'hourly',
       annualSalary: Number(annualSalary) || 0,
       holidayAllowanceDays: Number(holidayAllowanceDays) || 0,
@@ -304,6 +428,7 @@ module.exports = function (router) {
       hourlyRate: Number(hourlyRate) || 0,
       active: true,
       onRota: true,
+      rotaSortOrder: maxOrder + 1,
       createdAt: nowISO(),
     });
     ctx.db.save(data);
@@ -435,6 +560,15 @@ module.exports = function (router) {
                 <option value="salary" ${u.payType === 'salary' ? 'selected' : ''}>Fixed salary</option>
               </select>
             </label>
+          </div>
+          <div class="row">
+            <label>Department
+              <select name="departmentId">
+                <option value="">— None —</option>
+                ${departmentOptionsHtml(data, u.departmentId)}
+              </select>
+            </label>
+            <div></div>
           </div>
           ${ctx.user.role === 'owner' && u.id !== ctx.user.id && u.role !== 'owner'
             ? `<div class="row">
@@ -571,6 +705,7 @@ module.exports = function (router) {
       holidayAdjustmentDays,
       onRota,
       role,
+      departmentId,
     } = ctx.body || {};
     if (name) u.name = name;
     if (email) u.email = email;
@@ -582,6 +717,7 @@ module.exports = function (router) {
     u.holidayAdjustmentHours = Number(holidayAdjustmentHours) || 0;
     u.holidayAdjustmentDays = Number(holidayAdjustmentDays) || 0;
     u.onRota = onRota === 'on';
+    u.departmentId = (data.departments || []).some((d) => d.id === departmentId) ? departmentId : null;
     // Only an owner can change someone's role, never their own, and never to/from owner via this form.
     if (ctx.user.role === 'owner' && u.id !== ctx.user.id && u.role !== 'owner' && ['staff', 'manager'].includes(role)) {
       u.role = role;
@@ -875,30 +1011,54 @@ module.exports = function (router) {
 
     const headerRow = `<tr><th>Staff</th>${days.map((d) => `<th>${escapeHtml(dayLabel(d))}</th>`).join('')}</tr>`;
 
-    const bodyRows = staff
-      .map((u) => {
-        const cells = days
-          .map((d) => {
-            const shifts = weekShifts.filter((s) => s.userId === u.id && s.date === d);
-            const chips = shifts
-              .map((s) => {
-                const shiftData = escapeHtml(
-                  JSON.stringify({ id: s.id, userId: s.userId, date: s.date, start: s.start, end: s.end, role: s.role, breakMinutes: s.breakMinutes || 0, notes: s.notes || '' })
-                );
-                return `<div class="shift-chip-wrap" draggable="true" data-shift="${shiftData}">
-                  <a class="shift-chip${s.published ? '' : ' draft'}" href="/manager/rota/shift?id=${s.id}&week=${weekStart}">${escapeHtml(s.start)}–${escapeHtml(s.end)}<small>${escapeHtml(s.role)}${s.breakMinutes ? ` · ${s.breakMinutes}min break` : ''}${s.published ? '' : ' · draft'}</small></a>
-                  <button type="button" class="chip-copy-btn" title="Copy this shift" aria-label="Copy this shift">⧉</button>
-                </div>`;
+    // Group staff by department (in the order departments were created),
+    // with anyone unassigned in a final group. Only show group headers/
+    // colours at all once at least one department has been set up.
+    const departments = data.departments || [];
+    const showGroups = departments.length > 0;
+    const byOrder = (a, b) => (a.rotaSortOrder ?? 0) - (b.rotaSortOrder ?? 0);
+    const groups = [];
+    departments.forEach((dept) => {
+      const members = staff.filter((u) => u.departmentId === dept.id).sort(byOrder);
+      if (members.length) groups.push({ dept, members });
+    });
+    const ungrouped = staff.filter((u) => !u.departmentId || !departments.some((d) => d.id === u.departmentId)).sort(byOrder);
+    if (ungrouped.length) groups.push({ dept: null, members: ungrouped });
+
+    const bodyRows = groups
+      .map((group) => {
+        const colorClass = group.dept ? `dept-row-${group.dept.colorIndex % PALETTE_SIZE}` : '';
+        const accentClass = group.dept ? `dept-accent-${group.dept.colorIndex % PALETTE_SIZE}` : '';
+        const deptHeaderRow = showGroups
+          ? `<tr class="dept-group-row ${colorClass}"><td colspan="${days.length + 1}">${group.dept ? escapeHtml(group.dept.name) : 'No department'}</td></tr>`
+          : '';
+        const memberRows = group.members
+          .map((u) => {
+            const cells = days
+              .map((d) => {
+                const shifts = weekShifts.filter((s) => s.userId === u.id && s.date === d);
+                const chips = shifts
+                  .map((s) => {
+                    const shiftData = escapeHtml(
+                      JSON.stringify({ id: s.id, userId: s.userId, date: s.date, start: s.start, end: s.end, role: s.role, breakMinutes: s.breakMinutes || 0, notes: s.notes || '' })
+                    );
+                    return `<div class="shift-chip-wrap" draggable="true" data-shift="${shiftData}">
+                      <a class="shift-chip${s.published ? '' : ' draft'}" href="/manager/rota/shift?id=${s.id}&week=${weekStart}">${escapeHtml(s.start)}–${escapeHtml(s.end)}<small>${escapeHtml(s.role)}${s.breakMinutes ? ` · ${s.breakMinutes}min break` : ''}${s.published ? '' : ' · draft'}</small></a>
+                      <button type="button" class="chip-copy-btn" title="Copy this shift" aria-label="Copy this shift">⧉</button>
+                    </div>`;
+                  })
+                  .join('');
+                return `<td class="rota-cell" data-userid="${u.id}" data-date="${d}">${chips}<a class="add-shift-link" href="/manager/rota/shift?userId=${u.id}&date=${d}&week=${weekStart}">+ Add shift</a><button type="button" class="paste-shift-btn" style="display:none;" data-userid="${u.id}" data-date="${d}">📋 Paste shift</button></td>`;
               })
               .join('');
-            return `<td class="rota-cell" data-userid="${u.id}" data-date="${d}">${chips}<a class="add-shift-link" href="/manager/rota/shift?userId=${u.id}&date=${d}&week=${weekStart}">+ Add shift</a><button type="button" class="paste-shift-btn" style="display:none;" data-userid="${u.id}" data-date="${d}">📋 Paste shift</button></td>`;
+            return `<tr data-user-id="${u.id}" data-department-id="${group.dept ? group.dept.id : ''}"><td class="${accentClass}"><span class="row-drag-handle" draggable="true" title="Drag to reorder">⋮⋮</span><strong>${escapeHtml(u.name)}</strong><div class="muted">${escapeHtml(u.position)}</div>
+              <form method="POST" action="/manager/rota/staff/${u.id}/hide" data-confirm="Remove ${escapeHtml(u.name)} from the rota grid? Their account and shifts already assigned are unaffected — you can add them back any time.">
+                <input type="hidden" name="week" value="${weekStart}">
+                <button type="submit" class="link-btn-plain">Remove from rota</button>
+              </form></td>${cells}</tr>`;
           })
           .join('');
-        return `<tr><td><strong>${escapeHtml(u.name)}</strong><div class="muted">${escapeHtml(u.position)}</div>
-          <form method="POST" action="/manager/rota/staff/${u.id}/hide" data-confirm="Remove ${escapeHtml(u.name)} from the rota grid? Their account and shifts already assigned are unaffected — you can add them back any time.">
-            <input type="hidden" name="week" value="${weekStart}">
-            <button type="submit" class="link-btn-plain">Remove from rota</button>
-          </form></td>${cells}</tr>`;
+        return deptHeaderRow + memberRows;
       })
       .join('');
 
@@ -965,8 +1125,9 @@ module.exports = function (router) {
       </div>
       ${staff.length === 0 ? '<div class="card"><p class="empty-state">Add staff members first before building a rota.</p></div>' : `
       <div class="card">
-        <p class="muted mt-0">On a computer, drag a shift onto another day or person to move it, or use the ⧉ button
-          to copy one and paste it elsewhere.</p>
+        <p class="muted mt-0">On a computer, drag a shift onto another day or person to move it, use the ⧉ button to
+          copy one and paste it elsewhere, or drag the ⋮⋮ handle next to a name to reorder staff (within their
+          department group). <a href="/manager/departments">Manage departments →</a></p>
         <div class="table-wrap">
           <table class="rota-grid" data-week="${weekStart}">
             <thead>${headerRow}</thead>
@@ -1114,6 +1275,33 @@ module.exports = function (router) {
       ctx.db.save(data);
     }
     redirect(ctx.res, `/manager/rota?week=${week}`, { type: 'success', message: u ? `${u.name} added back to the rota grid.` : 'Staff member not found.' });
+  });
+
+  router.post('/manager/rota/staff/reorder', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const { draggedUserId, targetUserId, position, week } = ctx.body || {};
+    const redirectTo = `/manager/rota?week=${week || startOfWeek(todayISO())}`;
+    const data = ctx.db.load();
+    const dragged = data.users.find((u) => u.id === draggedUserId);
+    const target = data.users.find((u) => u.id === targetUserId);
+    if (!dragged || !target || dragged.id === target.id) {
+      redirect(ctx.res, redirectTo, { type: 'error', message: 'Could not reorder — staff member not found.' });
+      return;
+    }
+    if ((dragged.departmentId || null) !== (target.departmentId || null)) {
+      redirect(ctx.res, redirectTo, { type: 'error', message: 'Staff can only be reordered within the same department group.' });
+      return;
+    }
+    const group = rotaStaff(data)
+      .filter((u) => (u.departmentId || null) === (dragged.departmentId || null))
+      .sort((a, b) => (a.rotaSortOrder ?? 0) - (b.rotaSortOrder ?? 0));
+    const without = group.filter((u) => u.id !== dragged.id);
+    let targetIdx = without.findIndex((u) => u.id === target.id);
+    if (position === 'after') targetIdx += 1;
+    without.splice(targetIdx, 0, dragged);
+    without.forEach((u, i) => (u.rotaSortOrder = i));
+    ctx.db.save(data);
+    redirect(ctx.res, redirectTo, { type: 'success', message: `${dragged.name} reordered.` });
   });
 
   // ---------------- Rota templates ----------------
