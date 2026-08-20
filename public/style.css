@@ -273,7 +273,23 @@ tfoot td { font-weight: 700; border-top: 2px solid var(--line); border-bottom: n
 /* ---------- Rota grid ---------- */
 .rota-grid { border-collapse: collapse; width: 100%; min-width: 720px; }
 .rota-grid th, .rota-grid td { border: 1px solid var(--line); padding: 0.4rem; vertical-align: top; }
-.rota-grid th { background: var(--green-100); position: sticky; top: 0; }
+/* Sticks just below the top bar (not at top:0, which would sit exactly
+   underneath it and get hidden) — --topbar-h is measured in app.js since the
+   top bar's height varies (its nav row can wrap on narrow screens). */
+.rota-grid th { background: var(--green-100); position: sticky; top: var(--topbar-h, 96px); z-index: 5; }
+/* .table-wrap's overflow-x:auto (needed for narrow screens, since the grid
+   has a 720px min-width) has a side effect: per the CSS overflow spec, any
+   non-"visible" overflow-x forces overflow-y to compute as "auto" too, which
+   turns .table-wrap into its own scroll container — and that breaks the
+   sticky day header above, since it then sticks relative to .table-wrap's
+   (never-scrolled) internal scrollport instead of the page. On screens wide
+   enough that the grid fits without needing to scroll horizontally, drop
+   overflow-x back to visible so the sticky header tracks the page scroll
+   as expected. */
+@media (min-width: 800px) {
+  .table-wrap { overflow-x: visible; }
+}
+.rota-summary { font-size: 0.76rem; margin-top: 0.15rem; line-height: 1.3; }
 .dept-group-row td { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 0.3rem 0.6rem; border: none; }
 .row-drag-handle { cursor: grab; color: var(--muted); margin-right: 0.3rem; user-select: none; }
 .row-drag-handle:active { cursor: grabbing; }

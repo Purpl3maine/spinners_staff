@@ -127,7 +127,12 @@ module.exports = function (router) {
     const data = ctx.db.load();
     const status = currentStatus(data, ctx.user.id);
     const type = status.clockedIn ? 'out' : 'in';
-    data.clockEvents.push({ id: uuid(), userId: ctx.user.id, type, timestamp: nowISO(), lat: Number(lat), lng: Number(lng) });
+    // Clock-outs start unapproved — a manager reviews and approves worked
+    // shifts (Timesheets page) before they can be included in a payroll
+    // export. Clock-ins don't carry an approval status themselves.
+    const event = { id: uuid(), userId: ctx.user.id, type, timestamp: nowISO(), lat: Number(lat), lng: Number(lng) };
+    if (type === 'out') event.approved = false;
+    data.clockEvents.push(event);
     ctx.db.save(data);
     const msg = type === 'in' ? 'Clocked in. Have a good shift!' : 'Clocked out. Nice work!';
     redirect(ctx.res, '/staff', { type: 'success', message: msg });

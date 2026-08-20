@@ -1,4 +1,17 @@
 (function () {
+  // Keeps the rota grid's sticky day header positioned just below the
+  // sticky top bar rather than directly underneath it (where it'd be
+  // hidden) — measured live since the top bar's height varies (its nav row
+  // wraps onto a second line on narrow screens).
+  var topbar = document.querySelector('.topbar');
+  if (topbar) {
+    var syncTopbarHeight = function () {
+      document.documentElement.style.setProperty('--topbar-h', topbar.offsetHeight + 'px');
+    };
+    syncTopbarHeight();
+    window.addEventListener('resize', syncTopbarHeight);
+  }
+
   // Live-ticking clock on the staff clock-in page.
   var el = document.getElementById('live-clock');
   if (el) {

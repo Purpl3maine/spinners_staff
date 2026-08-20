@@ -105,7 +105,12 @@ Both levels see the same set of pages:
   publish the week when it's ready (shifts stay as an internal draft until
   published — staff only see published shifts). Shifts can include an
   **unpaid break** (in minutes), which is deducted automatically from that
-  day's paid hours on timesheets. Each row has a "Remove from rota" link for
+  day's paid hours on timesheets. For a shift that runs to midnight, set End
+  time to **00:00**. Under each person's name, a small summary shows their
+  **scheduled hours, estimated cost and shift count** for the week you're
+  viewing — a quick at-a-glance check while you're building it, similar to
+  Planday. The date header row **stays visible while you scroll** down a
+  busy week. Each row has a "Remove from rota" link for
   staff you don't need to schedule (e.g. an admin-only account) — it just
   hides them from the grid, their account keeps working normally, and
   there's a one-click "+ Add to rota" to bring them back. Managers show up
@@ -154,6 +159,18 @@ Both levels see the same set of pages:
   remaining) plus a full log of every holiday request and its outcome
 - Weekly timesheets report per staff member with estimated labour cost
   (salaried staff show their pro-rated weekly salary instead of hours × rate)
+- **Approving worked shifts**: every completed clock in/out needs a
+  manager's approval before it can go out in a payroll export — a "Shifts
+  to approve" card appears at the top of the Timesheets page whenever
+  there's one waiting, showing who, when, and the hours worked, with a
+  **✓ Approve** button per shift or **✓ Approve all** to clear the whole
+  week in one go. The same Approve control (and an "Approved"/"Needs
+  approval" tag) also shows on each staff member's own page next to their
+  clock events. Trying to export a range that still has unapproved shifts
+  in it is blocked with a message naming exactly who/when needs checking
+  first. Shifts recorded before this update were grandfathered in as
+  already approved, so existing history isn't affected — this only applies
+  to clock-outs from now on.
 - **Export for payroll** on the Timesheets page: pick any date range and
   either "All staff" or one individual, then **⬇ Download CSV** to get a
   file with each person's hours worked and estimated total pay for that
@@ -162,7 +179,8 @@ Both levels see the same set of pages:
   sign displays correctly in Excel. Salaried staff are pro-rated to the
   exact length of the date range chosen (not assumed to be one week), so
   it works for a single week, a fortnight, a full month, or any custom
-  period.
+  period. Blocked until every worked shift in the range is approved (see
+  above).
 
 - **HR records** on each staff member's page: an emergency contact,
   health/safety notes (allergies, conditions relevant to work), a

@@ -19,8 +19,9 @@ const {
   londonDateKey,
   londonWallTimeToISO,
   toCsv,
+  shiftDurationMinutes,
 } = require('../lib/util');
-const { currentStatus, totalHoursInRange, eventsForUser } = require('../lib/timesheet');
+const { currentStatus, totalHoursInRange, eventsForUser, pairHours, unapprovedPairsInRange } = require('../lib/timesheet');
 const { hashPassword } = require('../lib/db');
 const { holidayBalance } = require('../lib/holiday');
 const { isConfigured: emailConfigured, sendEmail, onboardingEmail, passwordResetEmail } = require('../lib/email');
@@ -492,9 +493,11 @@ module.exports = function (router) {
                 <div>
                   <span class="badge badge-${e.type}">${e.type === 'in' ? 'Clocked in' : 'Clocked out'}</span>
                   ${e.source === 'manual' ? '<span class="badge badge-draft">Manual</span>' : ''}
+                  ${e.type === 'out' ? (e.approved !== false ? '<span class="badge badge-approved">Approved</span>' : '<span class="badge badge-pending">Needs approval</span>') : ''}
                   <div class="muted">${escapeHtml(fullDateLabel(londonDateKey(e.timestamp)))} · ${fmtTimeLabel(e.timestamp)}</div>
                 </div>
                 <div class="row" style="gap:0.5rem;">
+                  ${e.type === 'out' && e.approved === false ? `<form method="POST" action="/manager/staff/${u.id}/clock/${e.id}/approve"><button type="submit" class="link-btn-plain">Approve</button></form>` : ''}
                   <a class="link-btn-plain" href="/manager/staff/${u.id}/clock/${e.id}/edit">Edit</a>
                   <form method="POST" action="/manager/staff/${u.id}/clock/${e.id}/delete" data-confirm="Remove this clock ${e.type === 'in' ? 'in' : 'out'} entry? This can't be undone.">
                     <button type="submit" class="link-btn-plain">Remove</button>
@@ -798,14 +801,19 @@ module.exports = function (router) {
       redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: 'Please provide a type, date and time.' });
       return;
     }
-    data.clockEvents.push({
+    const event = {
       id: uuid(),
       userId: u.id,
       type,
       timestamp: londonWallTimeToISO(date, time),
       source: 'manual',
       addedBy: ctx.user.id,
-    });
+    };
+    // Still needs the separate approval step before it can be exported to
+    // payroll, same as a self clock-out — being manually entered by a
+    // manager doesn't skip that review.
+    if (type === 'out') event.approved = false;
+    data.clockEvents.push(event);
     ctx.db.save(data);
     redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: `Manual clock ${type === 'in' ? 'in' : 'out'} added for ${u.name}.` });
   });
@@ -909,8 +917,39 @@ module.exports = function (router) {
     event.timestamp = londonWallTimeToISO(date, time);
     event.source = 'manual';
     event.editedBy = ctx.user.id;
+    // The time just changed, so any previous approval no longer reflects
+    // what's actually on record — needs a fresh review before payroll.
+    if (event.type === 'out') event.approved = false;
     ctx.db.save(data);
     redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: 'Clock event updated.' });
+  });
+
+  // Approves a single worked shift's clock-out event, marking it ready to be
+  // included in a payroll export. If a week is passed (e.g. from the
+  // Timesheets "Shifts to approve" list) redirects back there instead of the
+  // staff member's own page.
+  router.post('/manager/staff/:id/clock/:eventId/approve', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    const { week } = ctx.body || {};
+    const redirectTo = week ? `/manager/timesheets?week=${week}` : `/manager/staff/${u.id}`;
+    const event = data.clockEvents.find((e) => e.id === ctx.params.eventId && e.userId === u.id && e.type === 'out');
+    if (!event) {
+      redirect(ctx.res, redirectTo, { type: 'error', message: 'Clock event not found.' });
+      return;
+    }
+    event.approved = true;
+    ctx.db.save(data);
+    redirect(ctx.res, redirectTo, { type: 'success', message: `Shift approved for ${u.name}.` });
   });
 
   router.post('/manager/staff/:id/emergency-contact', (ctx) => {
@@ -1205,7 +1244,20 @@ module.exports = function (router) {
                 return `<td class="rota-cell${avail.cellClass}" data-userid="${u.id}" data-date="${d}">${avail.html}${chips}<a class="add-shift-link" href="/manager/rota/shift?userId=${u.id}&date=${d}&week=${weekStart}">+ Add shift</a><button type="button" class="paste-shift-btn" style="display:none;" data-userid="${u.id}" data-date="${d}">📋 Paste shift</button></td>`;
               })
               .join('');
+            // Small weekly summary under the name — scheduled hours, break-
+            // adjusted, plus estimated cost and shift count — a planning aid
+            // while building the rota, similar to the per-person summary
+            // Planday shows. Based on the shifts currently on the grid
+            // (draft or published), not on actual clock in/out yet.
+            const memberShifts = weekShifts.filter((s) => s.userId === u.id);
+            const scheduledMinutes = memberShifts.reduce((sum, s) => sum + shiftDurationMinutes(s.start, s.end, s.breakMinutes || 0), 0);
+            const scheduledHours = scheduledMinutes / 60;
+            const isSalary = u.payType === 'salary';
+            const scheduledCost = isSalary ? (u.annualSalary || 0) / 52 : scheduledHours * (u.hourlyRate || 0);
+            const shiftCount = memberShifts.length;
+            const summaryLine = `<div class="muted rota-summary">${fmtHours(scheduledHours)} hrs · ${fmtMoney(scheduledCost)}${isSalary ? ' (salaried)' : ''} · ${shiftCount} shift${shiftCount === 1 ? '' : 's'}</div>`;
             return `<tr data-user-id="${u.id}" data-department-id="${group.dept ? group.dept.id : ''}"><td class="${accentClass}"><span class="row-drag-handle" draggable="true" title="Drag to reorder">⋮⋮</span><strong>${escapeHtml(u.name)}</strong><div class="muted">${escapeHtml(u.position)}</div>
+              ${summaryLine}
               <form method="POST" action="/manager/rota/staff/${u.id}/hide" class="no-print" data-confirm="Remove ${escapeHtml(u.name)} from the rota grid? Their account and shifts already assigned are unaffected — you can add them back any time.">
                 <input type="hidden" name="week" value="${weekStart}">
                 <button type="submit" class="link-btn-plain">Remove from rota</button>
@@ -1363,6 +1415,7 @@ module.exports = function (router) {
             <label>Start time<input type="time" name="start" required value="${shift ? shift.start : '11:00'}"></label>
             <label>End time<input type="time" name="end" required value="${shift ? shift.end : '19:00'}"></label>
           </div>
+          <p class="muted mt-0">For a shift that runs to midnight, set End time to 00:00.</p>
           <label>Role / section<input type="text" name="role" value="${escapeHtml(shift ? shift.role : u ? u.position || '' : '')}"></label>
           <label>Unpaid break (minutes)
             <input type="number" name="breakMinutes" min="0" step="5" value="${shift ? shift.breakMinutes || 0 : 0}">
@@ -1390,8 +1443,13 @@ module.exports = function (router) {
     // userId is allowed to be empty — that's how an open (unassigned) shift
     // gets created, e.g. from the "+ Add open shift" row or by dragging an
     // existing shift onto it.
-    if (!date || !start || !end || start >= end) {
-      redirect(ctx.res, redirectTo, { type: 'error', message: 'Please provide a valid time range (end after start).' });
+    // An end time of "00:00" means the shift runs to midnight — the string
+    // comparison below would otherwise always reject it (as "before" any
+    // real start time), so it's allowed as a special case rather than
+    // requiring full support for shifts spanning into the next calendar day.
+    const validRange = start && end && (end === '00:00' || start < end);
+    if (!date || !start || !end || !validRange) {
+      redirect(ctx.res, redirectTo, { type: 'error', message: 'Please provide a valid time range (end after start, or 00:00 for a shift running to midnight).' });
       return;
     }
     const resolvedUserId = userId || null;
@@ -1863,6 +1921,41 @@ module.exports = function (router) {
 
     const staffOptionsHtml = staff.map((u) => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
 
+    // Worked shifts (clock in/out pairs) this week that still need a
+    // manager's approval before they can be included in a payroll export —
+    // see the export route below, which blocks on exactly this same check.
+    const unapproved = [];
+    staff.forEach((u) => {
+      unapprovedPairsInRange(data, u.id, weekStart, weekEnd).forEach((pair) => unapproved.push({ user: u, pair }));
+    });
+    unapproved.sort((a, b) => new Date(a.pair.inIso) - new Date(b.pair.inIso));
+    const approveCardHtml = unapproved.length
+      ? `<div class="card">
+          <div class="page-head" style="margin-bottom:0.5rem;">
+            <h2 style="margin:0;">Shifts to approve <span class="badge badge-pending">${unapproved.length}</span></h2>
+            <form method="POST" action="/manager/timesheets/approve-all"><input type="hidden" name="week" value="${weekStart}"><button type="submit" class="btn btn-sm btn-primary">✓ Approve all</button></form>
+          </div>
+          <p class="muted mt-0">Worked shifts need approving — check the clock in/out times look right — before
+            they're included in a payroll export.</p>
+          <ul class="list-plain">
+            ${unapproved
+              .map(({ user: su, pair }) => `<li>
+                <div class="row" style="align-items:center;">
+                  <div>
+                    <strong>${escapeHtml(su.name)}</strong>
+                    <div class="muted">${escapeHtml(fullDateLabel(londonDateKey(pair.inIso)))} · ${fmtTimeLabel(pair.inIso)}–${pair.outIso ? fmtTimeLabel(pair.outIso) : '?'} · ${fmtHours(pairHours(pair))} hrs</div>
+                  </div>
+                  <form method="POST" action="/manager/staff/${su.id}/clock/${pair.outEventId}/approve">
+                    <input type="hidden" name="week" value="${weekStart}">
+                    <button type="submit" class="btn btn-sm btn-primary">✓ Approve</button>
+                  </form>
+                </div>
+              </li>`)
+              .join('')}
+          </ul>
+        </div>`
+      : '';
+
     const body = `
       <div class="page-head"><h1>Timesheets</h1></div>
       <div class="week-nav">
@@ -1870,6 +1963,7 @@ module.exports = function (router) {
         <span class="label">${escapeHtml(fullDateLabel(weekStart))} – ${escapeHtml(fullDateLabel(weekEnd))}</span>
         <a class="btn btn-sm" href="/manager/timesheets?week=${addDays(weekStart, 7)}">Next week →</a>
       </div>
+      ${approveCardHtml}
       <div class="card">
         <div class="table-wrap">
           <table>
@@ -1902,6 +1996,34 @@ module.exports = function (router) {
     sendHtml(ctx, { title: 'Timesheets', activePath: '/manager/timesheets', body });
   });
 
+  // Approves every currently-unapproved worked shift for all staff in the
+  // given week in one go — the bulk equivalent of the per-shift Approve
+  // buttons above, for a manager who's checked the week over and is happy
+  // to sign off on all of it at once.
+  router.post('/manager/timesheets/approve-all', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const { week } = ctx.body || {};
+    const weekStart = week || startOfWeek(todayISO());
+    const weekEnd = addDays(weekStart, 6);
+    const staff = activeStaff(data);
+    let count = 0;
+    staff.forEach((u) => {
+      unapprovedPairsInRange(data, u.id, weekStart, weekEnd).forEach((pair) => {
+        const event = data.clockEvents.find((e) => e.id === pair.outEventId);
+        if (event) {
+          event.approved = true;
+          count += 1;
+        }
+      });
+    });
+    ctx.db.save(data);
+    redirect(ctx.res, `/manager/timesheets?week=${weekStart}`, {
+      type: 'success',
+      message: count ? `Approved ${count} shift${count === 1 ? '' : 's'}.` : 'Nothing left to approve.',
+    });
+  });
+
   router.get('/manager/timesheets/export', (ctx) => {
     if (requireRole(ctx, 'manager')) return;
     const data = ctx.db.load();
@@ -1916,6 +2038,30 @@ module.exports = function (router) {
     const staff = userId && userId !== 'all' ? staffPool.filter((u) => u.id === userId) : staffPool;
     if (!staff.length) {
       redirect(ctx.res, '/manager/timesheets', { type: 'error', message: 'No matching staff to export.' });
+      return;
+    }
+
+    // Worked shifts need approving before they can leave the building as a
+    // payroll export — block and point at exactly what still needs review
+    // rather than silently exporting a total that excludes it.
+    const unapproved = [];
+    staff.forEach((u) => {
+      unapprovedPairsInRange(data, u.id, from, to).forEach((pair) => unapproved.push({ user: u, pair }));
+    });
+    if (unapproved.length) {
+      unapproved.sort((a, b) => new Date(a.pair.inIso) - new Date(b.pair.inIso));
+      const preview = unapproved
+        .slice(0, 8)
+        .map((x) => `${x.user.name} (${fullDateLabel(londonDateKey(x.pair.inIso))})`)
+        .join(', ');
+      const more = unapproved.length > 8 ? ` and ${unapproved.length - 8} more` : '';
+      // Land back on the week containing the first unapproved shift, so the
+      // "Shifts to approve" card the manager sees actually shows it (rather
+      // than whatever week the Timesheets page defaults to).
+      redirect(ctx.res, `/manager/timesheets?week=${startOfWeek(londonDateKey(unapproved[0].pair.inIso))}`, {
+        type: 'error',
+        message: `${unapproved.length} worked shift${unapproved.length === 1 ? '' : 's'} in this range still need${unapproved.length === 1 ? 's' : ''} approving before you can export: ${preview}${more}. Approve them below, then try again.`,
+      });
       return;
     }
 
