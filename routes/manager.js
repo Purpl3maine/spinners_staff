@@ -18,6 +18,7 @@ const {
   nowTimeLabelUK,
   londonDateKey,
   londonWallTimeToISO,
+  toCsv,
 } = require('../lib/util');
 const { currentStatus, totalHoursInRange, eventsForUser } = require('../lib/timesheet');
 const { hashPassword } = require('../lib/db');
@@ -1828,6 +1829,19 @@ module.exports = function (router) {
   });
 
   // ---------------- Timesheets report ----------------
+
+  // Shared by the weekly summary table and the payroll export below, so a
+  // custom date range (not just a single week) pro-rates salaried pay
+  // correctly — proportional to how many weeks the range actually spans,
+  // rather than always assuming exactly one week.
+  function payForRange(data, u, startDate, endDate) {
+    const hours = totalHoursInRange(data, u.id, startDate, endDate);
+    const isSalary = u.payType === 'salary';
+    const weeks = daysBetweenInclusive(startDate, endDate) / 7;
+    const cost = isSalary ? ((u.annualSalary || 0) / 52) * weeks : hours * (u.hourlyRate || 0);
+    return { hours, cost, isSalary };
+  }
+
   router.get('/manager/timesheets', (ctx) => {
     if (requireRole(ctx, 'manager')) return;
     const data = ctx.db.load();
@@ -1839,15 +1853,15 @@ module.exports = function (router) {
     let grandCost = 0;
     const rows = staff
       .map((u) => {
-        const hrs = totalHoursInRange(data, u.id, weekStart, weekEnd);
-        const isSalary = u.payType === 'salary';
-        const cost = isSalary ? (u.annualSalary || 0) / 52 : hrs * (u.hourlyRate || 0);
+        const { hours: hrs, cost, isSalary } = payForRange(data, u, weekStart, weekEnd);
         grandHours += hrs;
         grandCost += cost;
         const costCell = isSalary ? `${fmtMoney(cost)} <span class="muted">(salaried, pro-rated)</span>` : fmtMoney(cost);
         return `<tr><td><a href="/manager/staff/${u.id}">${escapeHtml(u.name)}</a><div class="muted">${escapeHtml(u.position)}</div></td><td class="text-right">${fmtHours(hrs)} hrs</td><td class="text-right">${costCell}</td></tr>`;
       })
       .join('');
+
+    const staffOptionsHtml = staff.map((u) => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
 
     const body = `
       <div class="page-head"><h1>Timesheets</h1></div>
@@ -1866,7 +1880,84 @@ module.exports = function (router) {
         </div>
         <p class="muted" style="margin-top:0.75rem;">Estimated labour cost before tax, NI or on-costs — for planning only.
           Click a name to see their clock events — handy if someone forgot to clock in or out and their hours look wrong.</p>
+      </div>
+      <div class="card">
+        <h2>Export for payroll</h2>
+        <p class="muted mt-0">Pick a date range and download a spreadsheet (CSV) of hours worked and estimated pay
+          for that period — opens straight in Excel or Google Sheets, or attach it to an email as-is.</p>
+        <form method="GET" action="/manager/timesheets/export" class="stack">
+          <div class="row">
+            <label>From<input type="date" name="from" required value="${weekStart}"></label>
+            <label>To<input type="date" name="to" required value="${weekEnd}"></label>
+            <label>Staff
+              <select name="userId">
+                <option value="all">All staff</option>
+                ${staffOptionsHtml}
+              </select>
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary">⬇ Download CSV</button>
+        </form>
       </div>`;
     sendHtml(ctx, { title: 'Timesheets', activePath: '/manager/timesheets', body });
+  });
+
+  router.get('/manager/timesheets/export', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const { from, to, userId } = ctx.query || {};
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    if (!from || !to || !dateRe.test(from) || !dateRe.test(to) || from > to) {
+      redirect(ctx.res, '/manager/timesheets', { type: 'error', message: 'Please provide a valid date range (start before end) to export.' });
+      return;
+    }
+
+    const staffPool = activeStaff(data);
+    const staff = userId && userId !== 'all' ? staffPool.filter((u) => u.id === userId) : staffPool;
+    if (!staff.length) {
+      redirect(ctx.res, '/manager/timesheets', { type: 'error', message: 'No matching staff to export.' });
+      return;
+    }
+
+    const rows = [
+      [`${data.settings.pubName || 'PubShift'} — payroll export`],
+      [`Period: ${fullDateLabel(from)} to ${fullDateLabel(to)}`],
+      [`Generated: ${fullDateLabel(todayISO())} — estimated pay before tax, NI or on-costs; for payroll processing, not a payslip`],
+      [],
+      ['Name', 'Email', 'Position', 'Pay type', 'Hours worked', 'Hourly rate', 'Annual salary', 'Total pay (est.)'],
+    ];
+
+    let totalHours = 0;
+    let totalPay = 0;
+    staff
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((u) => {
+        const { hours, cost, isSalary } = payForRange(data, u, from, to);
+        totalHours += hours;
+        totalPay += cost;
+        rows.push([
+          u.name,
+          u.email,
+          u.position || '',
+          isSalary ? 'Salaried' : 'Hourly',
+          fmtHours(hours),
+          isSalary ? '' : (u.hourlyRate || 0).toFixed(2),
+          isSalary ? (u.annualSalary || 0).toFixed(2) : '',
+          cost.toFixed(2),
+        ]);
+      });
+
+    rows.push([]);
+    rows.push(['Total', '', '', '', fmtHours(totalHours), '', '', totalPay.toFixed(2)]);
+
+    const csv = toCsv(rows);
+    const who = userId && userId !== 'all' ? (staff[0].name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()) : 'all-staff';
+    const filename = `payroll-${who}-${from}-to-${to}.csv`;
+    ctx.res.writeHead(200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+    ctx.res.end(csv);
   });
 };

@@ -154,6 +154,15 @@ Both levels see the same set of pages:
   remaining) plus a full log of every holiday request and its outcome
 - Weekly timesheets report per staff member with estimated labour cost
   (salaried staff show their pro-rated weekly salary instead of hours × rate)
+- **Export for payroll** on the Timesheets page: pick any date range and
+  either "All staff" or one individual, then **⬇ Download CSV** to get a
+  file with each person's hours worked and estimated total pay for that
+  period (plus a grand total row). Opens straight in Excel or Google
+  Sheets, or can be attached to an email — includes a UTF-8 BOM so the £
+  sign displays correctly in Excel. Salaried staff are pro-rated to the
+  exact length of the date range chosen (not assumed to be one week), so
+  it works for a single week, a fortnight, a full month, or any custom
+  period.
 
 - **HR records** on each staff member's page: an emergency contact,
   health/safety notes (allergies, conditions relevant to work), a
