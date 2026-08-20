@@ -25,6 +25,18 @@ module.exports = function (router) {
         </form>
       </div>
       <div class="card">
+        <h2>Emergency contact</h2>
+        <p class="muted mt-0">Who should we contact if something happens to you at work?</p>
+        <form method="POST" action="/account/emergency-contact" class="stack">
+          <div class="row">
+            <label>Name<input type="text" name="ecName" value="${escapeHtml((ctx.user.emergencyContact && ctx.user.emergencyContact.name) || '')}"></label>
+            <label>Relationship<input type="text" name="ecRelationship" placeholder="e.g. Partner, Parent" value="${escapeHtml((ctx.user.emergencyContact && ctx.user.emergencyContact.relationship) || '')}"></label>
+          </div>
+          <label>Phone number<input type="tel" name="ecPhone" value="${escapeHtml((ctx.user.emergencyContact && ctx.user.emergencyContact.phone) || '')}"></label>
+          <button type="submit" class="btn btn-primary">Save emergency contact</button>
+        </form>
+      </div>
+      <div class="card">
         <h2>Change password</h2>
         <form method="POST" action="/account/password" class="stack">
           <label>Current password<input type="password" name="currentPassword" required autocomplete="current-password"></label>
@@ -62,6 +74,19 @@ module.exports = function (router) {
     u.email = cleanEmail;
     ctx.db.save(data);
     redirect(ctx.res, '/account', { type: 'success', message: 'Details updated.' });
+  });
+
+  router.post('/account/emergency-contact', (ctx) => {
+    if (!ctx.user) {
+      redirect(ctx.res, '/login');
+      return;
+    }
+    const { ecName, ecRelationship, ecPhone } = ctx.body || {};
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.user.id);
+    u.emergencyContact = { name: (ecName || '').trim(), relationship: (ecRelationship || '').trim(), phone: (ecPhone || '').trim() };
+    ctx.db.save(data);
+    redirect(ctx.res, '/account', { type: 'success', message: 'Emergency contact saved.' });
   });
 
   router.post('/account/password', (ctx) => {

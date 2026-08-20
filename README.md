@@ -90,7 +90,9 @@ Both levels see the same set of pages:
   day's paid hours on timesheets. Each row has a "Remove from rota" link for
   staff you don't need to schedule (e.g. an admin-only account) — it just
   hides them from the grid, their account keeps working normally, and
-  there's a one-click "+ Add to rota" to bring them back.
+  there's a one-click "+ Add to rota" to bring them back. Managers show up
+  here too (and on Timesheets/Holiday) if they also work paid shifts — only
+  the owner is left off, since that account is treated as admin-only.
 - Each staff member's page has a **manual clock in/out** override — add or
   remove clock events by hand, no location check. Useful when the location
   check isn't working for someone, or to fix a mistake.
@@ -100,7 +102,16 @@ Both levels see the same set of pages:
 - Weekly timesheets report per staff member with estimated labour cost
   (salaried staff show their pro-rated weekly salary instead of hours × rate)
 
-**Everyone** gets an **Account** page (top right) to change their own password.
+- **HR records** on each staff member's page: an emergency contact,
+  health/safety notes (allergies, conditions relevant to work), a
+  disciplinary log (add/remove dated entries), and a documents section for
+  uploading contracts and other paperwork (PDF, Word, or image files) with a
+  type/date/notes per file. Health info, disciplinary entries and documents
+  are only visible to managers and the owner — never to staff.
+
+**Everyone** gets an **Account** page (top right) to update their own name,
+email and password, and to add their own emergency contact details (managers
+can also set/edit this for someone from their staff page).
 
 **Onboarding emails** — when a manager adds a new staff member (or resets
 someone's password), the app can automatically email them their login
@@ -185,9 +196,9 @@ knowing about before you rely on this for real payroll or compliance:
 - **Hours booked off** for hourly staff's holiday requests are self-reported
   (staff type in the number), not derived automatically from a fixed working
   pattern, since their hours vary week to week.
-- **No messaging/newsfeed, shift swaps, document storage, payroll export, or
-  reporting/analytics dashboards** — you told me clock in/out, rota, and
-  holiday requests mattered most, so I focused there first.
+- **No messaging/newsfeed, shift swaps, payroll export, or reporting/
+  analytics dashboards** — you told me clock in/out, rota, and holiday
+  requests mattered most, so I focused there first.
 - **No self-service "forgot password" or self-signup** — if a staff member
   gets locked out, a manager resets their password for them (Staff page).
   With onboarding emails turned on (see above), that reset can be emailed to
@@ -200,7 +211,12 @@ knowing about before you rely on this for real payroll or compliance:
   setup in DEPLOY.md; if you host it elsewhere, make sure that volume is
   configured there too.
 - No encryption at rest, no audit log, no GDPR data-export/delete tooling —
-  needed before storing real staff data long-term.
+  worth having before storing real staff data long-term, and especially
+  relevant now that HR records (health notes, disciplinary entries, uploaded
+  contracts) live in the same unencrypted storage. Health information counts
+  as "special category data" under UK GDPR, so it's worth keeping only what
+  you actually need on file, and treating access to the owner/manager
+  accounts with real care — anyone with a manager login can see it.
 
 ## Going live with real staff
 

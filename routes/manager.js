@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const { sendHtml, redirect, requireRole } = require('../lib/respond');
 const {
   escapeHtml,
@@ -20,6 +21,16 @@ const { hashPassword } = require('../lib/db');
 const { holidayBalance } = require('../lib/holiday');
 const { isConfigured: emailConfigured, sendEmail, onboardingEmail, passwordResetEmail } = require('../lib/email');
 const { roleLabel, canManageUser } = require('../lib/roles');
+const { saveContractFile, absolutePath: contractAbsolutePath, deleteContractFile, deleteAllForUser } = require('../lib/uploads');
+
+const DISCIPLINARY_TYPES = ['Verbal warning', 'Written warning', 'Final written warning', 'Other'];
+
+function fmtFileSize(bytes) {
+  if (!bytes && bytes !== 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 // Anyone who can be scheduled/paid — regular staff and managers (managers
 // often work shifts too, e.g. a duty manager on the bar). The owner is left
@@ -234,8 +245,12 @@ module.exports = function (router) {
     if (!keepIds.includes(ctx.user.id)) keepIds.push(ctx.user.id);
 
     const before = data.users.length;
+    const removedUsers = data.users.filter((u) => !keepIds.includes(u.id));
     data.users = data.users.filter((u) => keepIds.includes(u.id));
     const removedCount = before - data.users.length;
+    // Clean up any uploaded HR documents (contracts etc) for removed accounts
+    // so they don't linger on disk with no record pointing to them.
+    removedUsers.forEach((u) => deleteAllForUser(u.id));
     data.shifts = [];
     data.clockEvents = [];
     data.timeOffRequests = [];
@@ -342,6 +357,46 @@ module.exports = function (router) {
           .join('')
       : '<li class="muted">No clock events yet.</li>';
 
+    const disciplinaryEntries = (u.disciplinary || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+    const disciplinaryHtml = disciplinaryEntries.length
+      ? disciplinaryEntries
+          .map(
+            (d) => `<li>
+              <div class="row" style="align-items:center;">
+                <div>
+                  <span class="badge badge-pending">${escapeHtml(d.type)}</span>
+                  <div class="muted">${escapeHtml(fullDateLabel(d.date))}</div>
+                  ${d.notes ? `<p style="margin:0.35rem 0 0;">${escapeHtml(d.notes)}</p>` : ''}
+                </div>
+                <form method="POST" action="/manager/staff/${u.id}/disciplinary/${d.id}/delete" data-confirm="Remove this disciplinary entry? This can't be undone.">
+                  <button type="submit" class="link-btn-plain">Remove</button>
+                </form>
+              </div>
+            </li>`
+          )
+          .join('')
+      : '<li class="muted">No disciplinary entries.</li>';
+
+    const contracts = (u.contracts || []).slice().sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+    const contractsHtml = contracts.length
+      ? contracts
+          .map(
+            (c) => `<li>
+              <div class="row" style="align-items:center;">
+                <div>
+                  <a href="/manager/staff/${u.id}/contracts/${c.id}" target="_blank" rel="noopener">${escapeHtml(c.filename)}</a>
+                  <div class="muted">${escapeHtml(c.type || 'Document')}${c.date ? ` · ${escapeHtml(fullDateLabel(c.date))}` : ''} · ${fmtFileSize(c.size)}</div>
+                  ${c.notes ? `<p style="margin:0.35rem 0 0;">${escapeHtml(c.notes)}</p>` : ''}
+                </div>
+                <form method="POST" action="/manager/staff/${u.id}/contracts/${c.id}/delete" data-confirm="Remove this document? This can't be undone.">
+                  <button type="submit" class="link-btn-plain">Remove</button>
+                </form>
+              </div>
+            </li>`
+          )
+          .join('')
+      : '<li class="muted">No documents uploaded yet.</li>';
+
     const body = `
       <div class="page-head"><h1>${escapeHtml(u.name)}</h1></div>
       <div class="card">
@@ -435,6 +490,59 @@ module.exports = function (router) {
         <form method="POST" action="/manager/staff/${u.id}/toggle">
           <button type="submit" class="btn ${u.active ? 'btn-danger' : ''}">${u.active ? 'Deactivate' : 'Reactivate'} account</button>
         </form>` : ''}
+      </div>
+      <div class="card">
+        <h2>Emergency contact</h2>
+        <p class="muted mt-0">Who to contact if something happens to them at work. ${u.id === ctx.user.id ? 'You can also update this yourself from My account.' : 'They can also update this themselves from their account.'}</p>
+        <form method="POST" action="/manager/staff/${u.id}/emergency-contact" class="stack">
+          <div class="row">
+            <label>Name<input type="text" name="ecName" value="${escapeHtml((u.emergencyContact && u.emergencyContact.name) || '')}"></label>
+            <label>Relationship<input type="text" name="ecRelationship" placeholder="e.g. Partner, Parent" value="${escapeHtml((u.emergencyContact && u.emergencyContact.relationship) || '')}"></label>
+          </div>
+          <label>Phone number<input type="tel" name="ecPhone" value="${escapeHtml((u.emergencyContact && u.emergencyContact.phone) || '')}"></label>
+          <button type="submit" class="btn">Save emergency contact</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Health information</h2>
+        <p class="muted mt-0">Anything relevant to keeping them safe at work — allergies, conditions, medication
+          that matters on shift. Visible to you and other managers only; keep it to what's actually needed for
+          their safety at work.</p>
+        <form method="POST" action="/manager/staff/${u.id}/health" class="stack">
+          <label>Notes<textarea name="healthInfo" rows="4">${escapeHtml(u.healthInfo || '')}</textarea></label>
+          <button type="submit" class="btn">Save</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Disciplinary record</h2>
+        <p class="muted mt-0">Visible to you and other managers only.</p>
+        <ul class="list-plain">${disciplinaryHtml}</ul>
+        <hr class="sep">
+        <form method="POST" action="/manager/staff/${u.id}/disciplinary" class="stack">
+          <div class="row">
+            <label>Type
+              <select name="type">${DISCIPLINARY_TYPES.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}</select>
+            </label>
+            <label>Date<input type="date" name="date" required value="${todayISO()}"></label>
+          </div>
+          <label>Notes<textarea name="notes" rows="3" placeholder="What happened, who was involved, any outcome or action taken..."></textarea></label>
+          <button type="submit" class="btn">Add entry</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Contracts &amp; documents</h2>
+        <p class="muted mt-0">Signed contracts, right-to-work checks, and other paperwork for this person.</p>
+        <ul class="list-plain">${contractsHtml}</ul>
+        <hr class="sep">
+        <form method="POST" action="/manager/staff/${u.id}/contracts" enctype="multipart/form-data" class="stack">
+          <label>File (PDF, Word doc, or image)<input type="file" name="file" required accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"></label>
+          <div class="row">
+            <label>Type<input type="text" name="type" placeholder="e.g. Contract of employment"></label>
+            <label>Date<input type="date" name="date" value="${todayISO()}"></label>
+          </div>
+          <label>Notes (optional)<textarea name="notes" rows="2"></textarea></label>
+          <button type="submit" class="btn">Upload</button>
+        </form>
       </div>`;
     sendHtml(ctx, { title: u.name, activePath: '/manager/staff', body });
   });
@@ -562,6 +670,172 @@ module.exports = function (router) {
       type: removed ? 'success' : 'error',
       message: removed ? 'Clock event removed.' : 'Clock event not found.',
     });
+  });
+
+  router.post('/manager/staff/:id/emergency-contact', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    const { ecName, ecRelationship, ecPhone } = ctx.body || {};
+    u.emergencyContact = { name: (ecName || '').trim(), relationship: (ecRelationship || '').trim(), phone: (ecPhone || '').trim() };
+    ctx.db.save(data);
+    redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: 'Emergency contact saved.' });
+  });
+
+  router.post('/manager/staff/:id/health', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    u.healthInfo = (ctx.body && ctx.body.healthInfo ? ctx.body.healthInfo : '').trim();
+    ctx.db.save(data);
+    redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: 'Health information saved.' });
+  });
+
+  router.post('/manager/staff/:id/disciplinary', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    const { type, date, notes } = ctx.body || {};
+    if (!date) {
+      redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: 'A date is required for a disciplinary entry.' });
+      return;
+    }
+    if (!u.disciplinary) u.disciplinary = [];
+    u.disciplinary.push({
+      id: uuid(),
+      type: DISCIPLINARY_TYPES.includes(type) ? type : 'Other',
+      date,
+      notes: (notes || '').trim(),
+      addedBy: ctx.user.id,
+      createdAt: nowISO(),
+    });
+    ctx.db.save(data);
+    redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: 'Disciplinary entry added.' });
+  });
+
+  router.post('/manager/staff/:id/disciplinary/:entryId/delete', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    const before = (u.disciplinary || []).length;
+    u.disciplinary = (u.disciplinary || []).filter((d) => d.id !== ctx.params.entryId);
+    const removed = u.disciplinary.length < before;
+    ctx.db.save(data);
+    redirect(ctx.res, `/manager/staff/${u.id}`, { type: removed ? 'success' : 'error', message: removed ? 'Disciplinary entry removed.' : 'Entry not found.' });
+  });
+
+  router.post('/manager/staff/:id/contracts', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    const file = ctx.files && ctx.files.file;
+    if (!file || !file.data || !file.data.length) {
+      redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: 'Choose a file to upload.' });
+      return;
+    }
+    let meta;
+    try {
+      meta = saveContractFile(u.id, file);
+    } catch (err) {
+      redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: err.message });
+      return;
+    }
+    const { type, date, notes } = ctx.body || {};
+    meta.type = (type || '').trim();
+    meta.date = date || '';
+    meta.notes = (notes || '').trim();
+    meta.uploadedAt = nowISO();
+    meta.uploadedBy = ctx.user.id;
+    if (!u.contracts) u.contracts = [];
+    u.contracts.push(meta);
+    ctx.db.save(data);
+    redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: 'Document uploaded.' });
+  });
+
+  router.get('/manager/staff/:id/contracts/:fileId', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u || !canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Not found.' });
+      return;
+    }
+    const doc = (u.contracts || []).find((c) => c.id === ctx.params.fileId);
+    if (!doc) {
+      redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: 'Document not found.' });
+      return;
+    }
+    const filePath = contractAbsolutePath(doc.storedPath);
+    if (!fs.existsSync(filePath)) {
+      redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: 'That file is missing from storage.' });
+      return;
+    }
+    ctx.res.writeHead(200, {
+      'Content-Type': doc.contentType || 'application/octet-stream',
+      'Content-Disposition': `inline; filename="${doc.filename.replace(/"/g, '')}"`,
+    });
+    fs.createReadStream(filePath).pipe(ctx.res);
+  });
+
+  router.post('/manager/staff/:id/contracts/:fileId/delete', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    const doc = (u.contracts || []).find((c) => c.id === ctx.params.fileId);
+    if (doc) {
+      deleteContractFile(doc.storedPath);
+      u.contracts = u.contracts.filter((c) => c.id !== ctx.params.fileId);
+      ctx.db.save(data);
+    }
+    redirect(ctx.res, `/manager/staff/${u.id}`, { type: doc ? 'success' : 'error', message: doc ? 'Document removed.' : 'Document not found.' });
   });
 
   router.post('/manager/staff/:id/toggle', (ctx) => {

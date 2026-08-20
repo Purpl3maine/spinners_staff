@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 
-const { parseCookies, parseBody, addSetCookie } = require('./lib/util');
+const { parseCookies, parseBody, parseMultipartBody, addSetCookie } = require('./lib/util');
 const { getUserFromRequest } = require('./lib/auth');
 const db = require('./lib/db');
 
@@ -115,7 +115,15 @@ async function handle(req, res) {
 
   if (req.method === 'POST') {
     try {
-      ctx.body = await parseBody(req);
+      const contentType = req.headers['content-type'] || '';
+      if (contentType.includes('multipart/form-data')) {
+        const { fields, files } = await parseMultipartBody(req);
+        ctx.body = fields;
+        ctx.files = files;
+      } else {
+        ctx.body = await parseBody(req);
+        ctx.files = {};
+      }
     } catch (err) {
       res.writeHead(400, { 'Content-Type': 'text/plain' });
       res.end('Bad request: ' + err.message);
