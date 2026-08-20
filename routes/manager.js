@@ -16,6 +16,7 @@ const {
   fmtMoney,
   fmtTimeLabel,
   nowTimeLabelUK,
+  londonDateKey,
   londonWallTimeToISO,
 } = require('../lib/util');
 const { currentStatus, totalHoursInRange, eventsForUser } = require('../lib/timesheet');
@@ -473,11 +474,14 @@ module.exports = function (router) {
                 <div>
                   <span class="badge badge-${e.type}">${e.type === 'in' ? 'Clocked in' : 'Clocked out'}</span>
                   ${e.source === 'manual' ? '<span class="badge badge-draft">Manual</span>' : ''}
-                  <div class="muted">${escapeHtml(fullDateLabel(e.timestamp.slice(0, 10)))} · ${fmtTimeLabel(e.timestamp)}</div>
+                  <div class="muted">${escapeHtml(fullDateLabel(londonDateKey(e.timestamp)))} · ${fmtTimeLabel(e.timestamp)}</div>
                 </div>
-                <form method="POST" action="/manager/staff/${u.id}/clock/${e.id}/delete" data-confirm="Remove this clock ${e.type === 'in' ? 'in' : 'out'} entry? This can't be undone.">
-                  <button type="submit" class="link-btn-plain">Remove</button>
-                </form>
+                <div class="row" style="gap:0.5rem;">
+                  <a class="link-btn-plain" href="/manager/staff/${u.id}/clock/${e.id}/edit">Edit</a>
+                  <form method="POST" action="/manager/staff/${u.id}/clock/${e.id}/delete" data-confirm="Remove this clock ${e.type === 'in' ? 'in' : 'out'} entry? This can't be undone.">
+                    <button type="submit" class="link-btn-plain">Remove</button>
+                  </form>
+                </div>
               </div>
             </li>`
           )
@@ -810,6 +814,87 @@ module.exports = function (router) {
     });
   });
 
+  // Fixes a clock in/out event that's already on record — e.g. a staff
+  // member forgot to clock in/out and a manager needs to correct the time,
+  // rather than delete it and add a fresh manual one.
+  router.get('/manager/staff/:id/clock/:eventId/edit', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    const event = data.clockEvents.find((e) => e.id === ctx.params.eventId && e.userId === u.id);
+    if (!event) {
+      redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: 'Clock event not found.' });
+      return;
+    }
+    const ts = new Date(event.timestamp);
+    // en-CA gives YYYY-MM-DD, which is what <input type="date"> needs — both
+    // pinned to Europe/London so this matches what the manager actually sees
+    // elsewhere on the page (fmtTimeLabel uses the same timezone).
+    const dateVal = ts.toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+    const timeVal = ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/London' });
+    const body = `
+      <div class="page-head"><h1>Edit clock event</h1></div>
+      <div class="card">
+        <p><strong>${escapeHtml(u.name)}</strong></p>
+        <form method="POST" action="/manager/staff/${u.id}/clock/${event.id}/edit" class="stack">
+          <div class="row">
+            <label>Type
+              <select name="type">
+                <option value="in" ${event.type === 'in' ? 'selected' : ''}>Clock in</option>
+                <option value="out" ${event.type === 'out' ? 'selected' : ''}>Clock out</option>
+              </select>
+            </label>
+            <label>Date<input type="date" name="date" required value="${dateVal}"></label>
+            <label>Time<input type="time" name="time" required value="${timeVal}"></label>
+          </div>
+          <button type="submit" class="btn btn-primary">Save changes</button>
+        </form>
+        <a class="btn" style="margin-top:0.75rem;" href="/manager/staff/${u.id}">Cancel</a>
+      </div>`;
+    sendHtml(ctx, { title: 'Edit clock event', activePath: '/manager/staff', body });
+  });
+
+  router.post('/manager/staff/:id/clock/:eventId/edit', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    const event = data.clockEvents.find((e) => e.id === ctx.params.eventId && e.userId === u.id);
+    if (!event) {
+      redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'error', message: 'Clock event not found.' });
+      return;
+    }
+    const { type, date, time } = ctx.body || {};
+    if (!['in', 'out'].includes(type) || !date || !time) {
+      redirect(ctx.res, `/manager/staff/${u.id}/clock/${event.id}/edit`, {
+        type: 'error',
+        message: 'Please provide a type, date and time.',
+      });
+      return;
+    }
+    event.type = type;
+    event.timestamp = londonWallTimeToISO(date, time);
+    event.source = 'manual';
+    event.editedBy = ctx.user.id;
+    ctx.db.save(data);
+    redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: 'Clock event updated.' });
+  });
+
   router.post('/manager/staff/:id/emergency-contact', (ctx) => {
     if (requireRole(ctx, 'manager')) return;
     const data = ctx.db.load();
@@ -1054,7 +1139,7 @@ module.exports = function (router) {
               })
               .join('');
             return `<tr data-user-id="${u.id}" data-department-id="${group.dept ? group.dept.id : ''}"><td class="${accentClass}"><span class="row-drag-handle" draggable="true" title="Drag to reorder">⋮⋮</span><strong>${escapeHtml(u.name)}</strong><div class="muted">${escapeHtml(u.position)}</div>
-              <form method="POST" action="/manager/rota/staff/${u.id}/hide" data-confirm="Remove ${escapeHtml(u.name)} from the rota grid? Their account and shifts already assigned are unaffected — you can add them back any time.">
+              <form method="POST" action="/manager/rota/staff/${u.id}/hide" class="no-print" data-confirm="Remove ${escapeHtml(u.name)} from the rota grid? Their account and shifts already assigned are unaffected — you can add them back any time.">
                 <input type="hidden" name="week" value="${weekStart}">
                 <button type="submit" class="link-btn-plain">Remove from rota</button>
               </form></td>${cells}</tr>`;
@@ -1065,7 +1150,7 @@ module.exports = function (router) {
       .join('');
 
     const hiddenHtml = hidden.length
-      ? `<div class="card">
+      ? `<div class="card no-print">
           <h2>Not shown on the rota</h2>
           <p class="muted">Active staff who are hidden from the grid above — they can still log in, clock in/out, and request time off as normal.</p>
           <ul class="list-plain">
@@ -1091,7 +1176,7 @@ module.exports = function (router) {
       .map((t) => `<option value="${t.id}">${escapeHtml(t.name)} (${t.shifts.length} shift${t.shifts.length === 1 ? '' : 's'})</option>`)
       .join('');
     const templatesCardHtml = `
-      <div class="card">
+      <div class="card no-print">
         <h2>Templates</h2>
         <p class="muted mt-0">Save a typical week's shifts as a template, then apply it to any future week instead
           of rebuilding it from scratch. Applying a template only adds a shift where that person doesn't already
@@ -1115,19 +1200,25 @@ module.exports = function (router) {
       </div>`;
 
     const body = `
-      <div class="page-head"><h1>Rota builder</h1><a class="btn btn-sm" href="/manager/staff">+ Add / manage staff</a></div>
-      <div id="shift-clipboard-bar" class="clipboard-bar" style="display:none;"></div>
+      <div class="page-head">
+        <h1>Rota builder</h1>
+        <div class="row no-print" style="gap:0.5rem;">
+          <button type="button" class="btn btn-sm" onclick="window.print()">🖨️ Print rota</button>
+          <a class="btn btn-sm" href="/manager/staff">+ Add / manage staff</a>
+        </div>
+      </div>
+      <div id="shift-clipboard-bar" class="clipboard-bar no-print" style="display:none;"></div>
       <div class="week-nav">
-        <a class="btn btn-sm" href="/manager/rota?week=${addDays(weekStart, -7)}">← Prev week</a>
+        <a class="btn btn-sm no-print" href="/manager/rota?week=${addDays(weekStart, -7)}">← Prev week</a>
         <span class="label">${escapeHtml(fullDateLabel(weekStart))} – ${escapeHtml(fullDateLabel(weekEnd))}</span>
-        <a class="btn btn-sm" href="/manager/rota?week=${addDays(weekStart, 7)}">Next week →</a>
+        <a class="btn btn-sm no-print" href="/manager/rota?week=${addDays(weekStart, 7)}">Next week →</a>
         ${anyShift ? (anyDraft
-          ? `<form method="POST" action="/manager/rota/publish" class="inline-form"><input type="hidden" name="week" value="${weekStart}"><button type="submit" class="btn btn-amber">Publish week to staff</button></form>`
+          ? `<form method="POST" action="/manager/rota/publish" class="inline-form no-print"><input type="hidden" name="week" value="${weekStart}"><button type="submit" class="btn btn-amber">Publish week to staff</button></form>`
           : `<span class="badge badge-published">Published</span>`) : ''}
       </div>
       ${staff.length === 0 ? '<div class="card"><p class="empty-state">Add staff members first before building a rota.</p></div>' : `
       <div class="card">
-        <p class="muted mt-0">On a computer, drag a shift onto another day or person to move it, use the ⧉ button to
+        <p class="muted mt-0 no-print">On a computer, drag a shift onto another day or person to move it, use the ⧉ button to
           copy one and paste it elsewhere, or drag the ⋮⋮ handle next to a name to reorder staff (within their
           department group). <a href="/manager/departments">Manage departments →</a></p>
         <div class="table-wrap">
@@ -1568,7 +1659,7 @@ module.exports = function (router) {
         grandHours += hrs;
         grandCost += cost;
         const costCell = isSalary ? `${fmtMoney(cost)} <span class="muted">(salaried, pro-rated)</span>` : fmtMoney(cost);
-        return `<tr><td>${escapeHtml(u.name)}<div class="muted">${escapeHtml(u.position)}</div></td><td class="text-right">${fmtHours(hrs)} hrs</td><td class="text-right">${costCell}</td></tr>`;
+        return `<tr><td><a href="/manager/staff/${u.id}">${escapeHtml(u.name)}</a><div class="muted">${escapeHtml(u.position)}</div></td><td class="text-right">${fmtHours(hrs)} hrs</td><td class="text-right">${costCell}</td></tr>`;
       })
       .join('');
 
@@ -1587,7 +1678,8 @@ module.exports = function (router) {
             <tfoot><tr><td>Total</td><td class="text-right">${fmtHours(grandHours)} hrs</td><td class="text-right">${fmtMoney(grandCost)}</td></tr></tfoot>
           </table>
         </div>
-        <p class="muted" style="margin-top:0.75rem;">Estimated labour cost before tax, NI or on-costs — for planning only.</p>
+        <p class="muted" style="margin-top:0.75rem;">Estimated labour cost before tax, NI or on-costs — for planning only.
+          Click a name to see their clock events — handy if someone forgot to clock in or out and their hours look wrong.</p>
       </div>`;
     sendHtml(ctx, { title: 'Timesheets', activePath: '/manager/timesheets', body });
   });
