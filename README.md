@@ -61,10 +61,23 @@ like a native app.
 - Clock in / clock out with a big one-tap button, and see hours worked today
   — the app checks the phone's location and only allows it within 50 metres
   of the pub
-- View upcoming published shifts (schedule)
+- **Clock reminder notifications** (optional): turn these on from the Clock
+  page and get a push notification shortly before a shift starts if you
+  haven't clocked in yet, and shortly after it ends if you haven't clocked
+  out — works even if the app/tab isn't open, once it's installed to your
+  Home Screen (or just open in a normal desktop browser tab). Turn it off
+  the same way, from the same button.
+- View upcoming published shifts (schedule), including any **open shifts**
+  — unassigned shifts anyone can request; your manager approves or declines
+  each request, and you'll see the outcome here
 - View a weekly timesheet of hours worked, with an estimated pay total
 - Request holiday/sick/other leave, see remaining holiday balance, and track
   request status
+
+Managers get all of the above too (via a "Clock in/out"/"My schedule"/"My
+timesheet"/"My time off" set of links in their own nav), since managers
+often work paid shifts themselves — the owner account is the only one left
+out, as it's treated as admin-only.
 
 **Managers & the owner** — there are two levels above staff:
 - **Manager**: full day-to-day access — staff, rota, payroll/timesheets,
@@ -108,10 +121,24 @@ Both levels see the same set of pages:
   department, drag the **⋮⋮** handle next to someone's name to reorder
   them (desktop only) — staff can only be reordered within their own
   department group, not moved between groups this way.
-- Each staff member's page has a **manual clock in/out** override — add or
-  remove clock events by hand, no location check. Useful when the location
-  check isn't working for someone, or to fix a mistake.
-- Approve or deny time-off requests
+  An **Unassigned** row at the top of the grid holds **open shifts** —
+  add one with "+ Add open shift", and any staff member can request it
+  from their Schedule page (once the week's published); approve or decline
+  requests from the **Requests** page, or from the shift's own edit page.
+  Approving assigns it to them and automatically declines anyone else who
+  also asked. You can also just drag an existing shift onto the Unassigned
+  row to open it back up, or drag an open shift onto someone's row to
+  assign it directly, skipping the request step entirely.
+- **Print rota**: a "🖨️ Print rota" button on the Rota builder gives you a
+  clean, landscape-friendly printout of the week you're viewing — no menus
+  or buttons, just who's working when.
+- Each staff member's page has a **manual clock in/out** override — add,
+  **edit**, or remove clock events by hand, no location check. Useful when
+  the location check isn't working for someone, or to fix a mistake (e.g.
+  they forgot to clock in/out and their timesheet looks wrong) — the
+  Timesheets page links each person's name straight to this.
+- Approve or decline open shift requests, and approve or deny time-off
+  requests, both from the **Requests** page
 - **Holiday page**: everyone's balance at a glance (accrued/allowance, taken,
   remaining) plus a full log of every holiday request and its outcome
 - Weekly timesheets report per staff member with estimated labour cost
@@ -225,6 +252,14 @@ knowing about before you rely on this for real payroll or compliance:
   `RAILWAY_VOLUME_MOUNT_PATH` env var, so this is handled for the Railway
   setup in DEPLOY.md; if you host it elsewhere, make sure that volume is
   configured there too.
+- **Clock reminder notifications** use the standard Web Push API (no
+  third-party notification service, so no ongoing cost or dependency) — but
+  it's a browser feature with real platform limits: on iPhone/iPad it only
+  works once the app's been added to the Home Screen (iOS 16.4+, plain
+  Safari tabs can't receive push at all); on Android/desktop it works
+  straight from the browser, installed or not. If someone's phone is off,
+  in Do Not Disturb, or the browser force-quit, the reminder just won't
+  arrive — same as any push notification.
 - No encryption at rest, no audit log, no GDPR data-export/delete tooling —
   worth having before storing real staff data long-term, and especially
   relevant now that HR records (health notes, disciplinary entries, uploaded

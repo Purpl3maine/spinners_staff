@@ -95,6 +95,7 @@ module.exports = function (router) {
       .filter((x) => x.status.clockedIn);
 
     const pending = data.timeOffRequests.filter((r) => r.status === 'pending').sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
+    const pendingClaims = (data.shiftClaims || []).filter((c) => c.status === 'pending');
     const weekStart = startOfWeek(todayISO());
     const weekEnd = addDays(weekStart, 6);
     const shiftsThisWeek = data.shifts.filter((s) => s.date >= weekStart && s.date <= weekEnd).length;
@@ -103,14 +104,30 @@ module.exports = function (router) {
       ? onShift.map((x) => `<li><strong>${escapeHtml(x.user.name)}</strong> <span class="muted">(${escapeHtml(x.user.position)})</span> — since ${fmtTimeLabel(x.status.since)}</li>`).join('')
       : '<li class="muted">Nobody is clocked in right now.</li>';
 
-    const pendingHtml = pending.length
-      ? pending
-          .slice(0, 5)
-          .map((r) => {
-            const u = data.users.find((x) => x.id === r.userId);
-            return `<li><strong>${escapeHtml(u ? u.name : 'Unknown')}</strong> — ${escapeHtml(r.type)} ${escapeHtml(fullDateLabel(r.startDate))}${r.startDate !== r.endDate ? ` → ${escapeHtml(fullDateLabel(r.endDate))}` : ''}</li>`;
-          })
-          .join('')
+    const pendingItems = [
+      ...pending.map((r) => {
+        const u = data.users.find((x) => x.id === r.userId);
+        return {
+          sortKey: r.requestedAt,
+          html: `<li><strong>${escapeHtml(u ? u.name : 'Unknown')}</strong> — ${escapeHtml(r.type)} ${escapeHtml(fullDateLabel(r.startDate))}${r.startDate !== r.endDate ? ` → ${escapeHtml(fullDateLabel(r.endDate))}` : ''}</li>`,
+        };
+      }),
+      ...pendingClaims.map((c) => {
+        const u = data.users.find((x) => x.id === c.userId);
+        const shift = data.shifts.find((s) => s.id === c.shiftId);
+        return {
+          sortKey: c.requestedAt,
+          html: shift
+            ? `<li><strong>${escapeHtml(u ? u.name : 'Unknown')}</strong> — wants to claim ${escapeHtml(dayLabel(shift.date))} ${escapeHtml(shift.start)}–${escapeHtml(shift.end)}</li>`
+            : '',
+        };
+      }),
+    ]
+      .filter((x) => x.html)
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+    const pendingHtml = pendingItems.length
+      ? pendingItems.slice(0, 5).map((x) => x.html).join('')
       : '<li class="muted">No pending requests.</li>';
 
     const body = `
@@ -119,7 +136,7 @@ module.exports = function (router) {
         <div class="stat-tile"><div class="num">${onShift.length}</div><div class="label">Clocked in now</div></div>
         <div class="stat-tile"><div class="num">${staff.length}</div><div class="label">Active staff</div></div>
         <div class="stat-tile"><div class="num">${shiftsThisWeek}</div><div class="label">Shifts this week</div></div>
-        <div class="stat-tile"><div class="num">${pending.length}</div><div class="label">Pending requests</div></div>
+        <div class="stat-tile"><div class="num">${pending.length + pendingClaims.length}</div><div class="label">Pending requests</div></div>
       </div>
       <div class="grid-2">
         <div class="card">
@@ -127,7 +144,7 @@ module.exports = function (router) {
           <ul class="list-plain">${onShiftHtml}</ul>
         </div>
         <div class="card">
-          <div class="card-header"><h2>Pending time off</h2><a class="btn btn-sm" href="/manager/requests">View all</a></div>
+          <div class="card-header"><h2>Pending requests</h2><a class="btn btn-sm" href="/manager/requests">View all</a></div>
           <ul class="list-plain">${pendingHtml}</ul>
         </div>
       </div>
@@ -1112,7 +1129,35 @@ module.exports = function (router) {
     const ungrouped = staff.filter((u) => !u.departmentId || !departments.some((d) => d.id === u.departmentId)).sort(byOrder);
     if (ungrouped.length) groups.push({ dept: null, members: ungrouped });
 
-    const bodyRows = groups
+    // Open (unassigned) shifts get their own row at the top of the grid —
+    // anyone can request one from their Schedule page, and it moves into
+    // the normal per-person row once you approve a request for it.
+    const openShifts = weekShifts.filter((s) => !s.userId);
+    const openShiftsRowHtml = `
+      <tr class="dept-group-row open-shifts-header"><td colspan="${days.length + 1}">Open shifts <span class="muted" style="font-weight:400;">— anyone can request these once published; approve on the <a href="/manager/requests">Requests page</a></span></td></tr>
+      <tr class="open-shifts-row">
+        <td><strong>Unassigned</strong></td>
+        ${days
+          .map((d) => {
+            const shifts = openShifts.filter((s) => s.date === d);
+            const chips = shifts
+              .map((s) => {
+                const pendingCount = (data.shiftClaims || []).filter((c) => c.shiftId === s.id && c.status === 'pending').length;
+                const shiftData = escapeHtml(
+                  JSON.stringify({ id: s.id, userId: null, date: s.date, start: s.start, end: s.end, role: s.role, breakMinutes: s.breakMinutes || 0, notes: s.notes || '' })
+                );
+                return `<div class="shift-chip-wrap" draggable="true" data-shift="${shiftData}">
+                  <a class="shift-chip open-shift-chip${s.published ? '' : ' draft'}" href="/manager/rota/shift?id=${s.id}&week=${weekStart}">${escapeHtml(s.start)}–${escapeHtml(s.end)}<small>${escapeHtml(s.role)}${s.published ? '' : ' · draft'}</small>${pendingCount ? `<span class="badge badge-pending">${pendingCount} request${pendingCount === 1 ? '' : 's'}</span>` : ''}</a>
+                  <button type="button" class="chip-copy-btn" title="Copy this shift" aria-label="Copy this shift">⧉</button>
+                </div>`;
+              })
+              .join('');
+            return `<td class="rota-cell" data-userid="" data-date="${d}">${chips}<a class="add-shift-link" href="/manager/rota/shift?date=${d}&week=${weekStart}">+ Add open shift</a><button type="button" class="paste-shift-btn" style="display:none;" data-userid="" data-date="${d}">📋 Paste shift</button></td>`;
+          })
+          .join('')}
+      </tr>`;
+
+    const bodyRows = openShiftsRowHtml + groups
       .map((group) => {
         const colorClass = group.dept ? `dept-row-${group.dept.colorIndex % PALETTE_SIZE}` : '';
         const accentClass = group.dept ? `dept-accent-${group.dept.colorIndex % PALETTE_SIZE}` : '';
@@ -1245,18 +1290,48 @@ module.exports = function (router) {
         return;
       }
     }
-    const userId = shift ? shift.userId : ctx.query.userId;
+    // No userId at all means this is (or will become) an open shift —
+    // unassigned, for any staff member to request from their Schedule page.
+    const userId = shift ? shift.userId : ctx.query.userId || '';
     const date = shift ? shift.date : ctx.query.date;
-    const u = data.users.find((x) => x.id === userId);
-    if (!u) {
+    const u = userId ? data.users.find((x) => x.id === userId) : null;
+    if (userId && !u) {
       redirect(ctx.res, `/manager/rota?week=${week}`, { type: 'error', message: 'Staff member not found.' });
       return;
     }
 
+    const whoLine = u
+      ? `<p><strong>${escapeHtml(u.name)}</strong> · ${escapeHtml(fullDateLabel(date))}</p>`
+      : `<p><span class="badge badge-pending">Open shift</span> · ${escapeHtml(fullDateLabel(date))} <span class="muted">— no one's assigned yet; staff can request it once published.</span></p>`;
+
+    const pendingClaims =
+      shift && !shift.userId ? (data.shiftClaims || []).filter((c) => c.shiftId === shift.id && c.status === 'pending') : [];
+    const claimsHtml = pendingClaims.length
+      ? `<div class="card" style="margin-top:0.75rem;">
+          <h3 style="margin:0 0 0.5rem;">Requests to claim this shift</h3>
+          <ul class="list-plain">
+            ${pendingClaims
+              .map((c) => {
+                const claimant = data.users.find((x) => x.id === c.userId);
+                return `<li>
+                  <div class="row" style="align-items:center;">
+                    <div><strong>${escapeHtml(claimant ? claimant.name : 'Unknown')}</strong></div>
+                    <div class="row" style="gap:0.5rem;">
+                      <form method="POST" action="/manager/shift-claims/${c.id}"><input type="hidden" name="action" value="approve"><input type="hidden" name="week" value="${escapeHtml(week)}"><button type="submit" class="btn btn-sm btn-primary">Approve</button></form>
+                      <form method="POST" action="/manager/shift-claims/${c.id}"><input type="hidden" name="action" value="decline"><input type="hidden" name="week" value="${escapeHtml(week)}"><button type="submit" class="btn btn-sm btn-danger">Decline</button></form>
+                    </div>
+                  </div>
+                </li>`;
+              })
+              .join('')}
+          </ul>
+        </div>`
+      : '';
+
     const body = `
-      <div class="page-head"><h1>${shift ? 'Edit' : 'Add'} shift</h1></div>
+      <div class="page-head"><h1>${shift ? 'Edit' : 'Add'}${u ? '' : ' open'} shift</h1></div>
       <div class="card">
-        <p><strong>${escapeHtml(u.name)}</strong> · ${escapeHtml(fullDateLabel(date))}</p>
+        ${whoLine}
         <form method="POST" action="/manager/rota/shift" class="stack">
           <input type="hidden" name="id" value="${shift ? shift.id : ''}">
           <input type="hidden" name="userId" value="${escapeHtml(userId)}">
@@ -1266,14 +1341,14 @@ module.exports = function (router) {
             <label>Start time<input type="time" name="start" required value="${shift ? shift.start : '11:00'}"></label>
             <label>End time<input type="time" name="end" required value="${shift ? shift.end : '19:00'}"></label>
           </div>
-          <label>Role / section<input type="text" name="role" value="${escapeHtml(shift ? shift.role : u.position || '')}"></label>
+          <label>Role / section<input type="text" name="role" value="${escapeHtml(shift ? shift.role : u ? u.position || '' : '')}"></label>
           <label>Unpaid break (minutes)
             <input type="number" name="breakMinutes" min="0" step="5" value="${shift ? shift.breakMinutes || 0 : 0}">
           </label>
           <p class="muted mt-0">Deducted automatically from this day's paid hours on their timesheet — e.g. 30 for
             a standard half-hour unpaid break. Leave at 0 if there's no unpaid break.</p>
           <label>Notes (optional)<textarea name="notes">${escapeHtml(shift ? shift.notes : '')}</textarea></label>
-          <button type="submit" class="btn btn-primary">${shift ? 'Save changes' : 'Add shift'}</button>
+          <button type="submit" class="btn btn-primary">${shift ? 'Save changes' : u ? 'Add shift' : 'Add open shift'}</button>
         </form>
         ${shift ? `<form method="POST" action="/manager/rota/shift/delete" style="margin-top:0.75rem;" data-confirm="Remove this shift?">
           <input type="hidden" name="id" value="${shift.id}">
@@ -1281,7 +1356,8 @@ module.exports = function (router) {
           <button type="submit" class="btn btn-danger">Delete shift</button>
         </form>` : ''}
         <a class="btn" style="margin-top:0.75rem;" href="/manager/rota?week=${escapeHtml(week)}">Cancel</a>
-      </div>`;
+      </div>
+      ${claimsHtml}`;
     sendHtml(ctx, { title: shift ? 'Edit shift' : 'Add shift', activePath: '/manager/rota', body });
   });
 
@@ -1289,10 +1365,14 @@ module.exports = function (router) {
     if (requireRole(ctx, 'manager')) return;
     const { id, userId, date, start, end, role, notes, breakMinutes, week } = ctx.body || {};
     const redirectTo = `/manager/rota?week=${week || startOfWeek(todayISO())}`;
-    if (!userId || !date || !start || !end || start >= end) {
+    // userId is allowed to be empty — that's how an open (unassigned) shift
+    // gets created, e.g. from the "+ Add open shift" row or by dragging an
+    // existing shift onto it.
+    if (!date || !start || !end || start >= end) {
       redirect(ctx.res, redirectTo, { type: 'error', message: 'Please provide a valid time range (end after start).' });
       return;
     }
+    const resolvedUserId = userId || null;
     const breakMins = Math.max(0, Number(breakMinutes) || 0);
     const data = ctx.db.load();
     if (id) {
@@ -1305,11 +1385,23 @@ module.exports = function (router) {
         shift.breakMinutes = breakMins;
         // Also lets a drag-and-drop move (or a paste target) reassign who
         // the shift belongs to and which day it's on, not just its times.
-        shift.userId = userId;
+        // Dragging onto the Open shifts row (resolvedUserId === null) opens
+        // it back up; assigning it directly here also clears any pending
+        // claims on it, since the manager just filled it a different way.
+        if (shift.userId !== resolvedUserId && resolvedUserId) {
+          (data.shiftClaims || []).forEach((c) => {
+            if (c.shiftId === shift.id && c.status === 'pending') {
+              c.status = 'declined';
+              c.decidedBy = ctx.user.id;
+              c.decidedAt = nowISO();
+            }
+          });
+        }
+        shift.userId = resolvedUserId;
         shift.date = date;
       }
     } else {
-      data.shifts.push({ id: uuid(), userId, date, start, end, role: role || 'Staff', notes: notes || '', breakMinutes: breakMins, published: false });
+      data.shifts.push({ id: uuid(), userId: resolvedUserId, date, start, end, role: role || 'Staff', notes: notes || '', breakMinutes: breakMins, published: false });
     }
     ctx.db.save(data);
     if (ctx.req.headers['x-requested-with'] === 'fetch') {
@@ -1614,17 +1706,90 @@ module.exports = function (router) {
       </li>`;
     }
 
+    const pendingClaims = (data.shiftClaims || []).filter((c) => c.status === 'pending').sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
+    const claimsHtml = pendingClaims.length
+      ? pendingClaims
+          .map((c) => {
+            const u = data.users.find((x) => x.id === c.userId);
+            const shift = data.shifts.find((s) => s.id === c.shiftId);
+            if (!shift) return '';
+            return `<li>
+              <div class="row" style="align-items:center;">
+                <div>
+                  <strong>${escapeHtml(u ? u.name : 'Unknown')}</strong> wants to claim
+                  <div class="muted">${escapeHtml(fullDateLabel(shift.date))} · ${escapeHtml(shift.start)}–${escapeHtml(shift.end)} · ${escapeHtml(shift.role)}</div>
+                </div>
+                <div class="pill-row">
+                  <form method="POST" action="/manager/shift-claims/${c.id}"><input type="hidden" name="action" value="approve"><button class="btn btn-sm btn-primary" type="submit">Approve</button></form>
+                  <form method="POST" action="/manager/shift-claims/${c.id}"><input type="hidden" name="action" value="decline"><button class="btn btn-sm btn-danger" type="submit">Decline</button></form>
+                </div>
+              </div>
+            </li>`;
+          })
+          .join('')
+      : '<li class="muted">Nothing waiting on you 🎉</li>';
+
     const body = `
-      <div class="page-head"><h1>Time off requests</h1></div>
+      <div class="page-head"><h1>Requests</h1></div>
       <div class="card">
-        <h2>Pending (${pending.length})</h2>
+        <h2>Open shift claims (${pendingClaims.length})</h2>
+        <p class="muted mt-0">Approving one assigns that shift to them and declines anyone else who also asked for it.</p>
+        <ul class="list-plain">${claimsHtml}</ul>
+      </div>
+      <div class="card">
+        <h2>Time off — pending (${pending.length})</h2>
         <ul class="list-plain">${pending.length ? pending.map((r) => rowFor(r, true)).join('') : '<li class="muted">Nothing waiting on you 🎉</li>'}</ul>
       </div>
       <div class="card">
-        <h2>History</h2>
+        <h2>Time off — history</h2>
         <ul class="list-plain">${decided.length ? decided.map((r) => rowFor(r, false)).join('') : '<li class="muted">No decisions yet.</li>'}</ul>
       </div>`;
     sendHtml(ctx, { title: 'Requests', activePath: '/manager/requests', body });
+  });
+
+  router.post('/manager/shift-claims/:id', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    data.shiftClaims = data.shiftClaims || [];
+    const claim = data.shiftClaims.find((c) => c.id === ctx.params.id);
+    const { action } = ctx.body || {};
+    if (!claim || claim.status !== 'pending' || !['approve', 'decline'].includes(action)) {
+      redirect(ctx.res, '/manager/requests', { type: 'error', message: 'Request not found.' });
+      return;
+    }
+    const shift = data.shifts.find((s) => s.id === claim.shiftId);
+    if (action === 'approve') {
+      if (!shift || shift.userId) {
+        // Someone else already got it, or it's been deleted, since this
+        // request was made.
+        claim.status = 'declined';
+        claim.decidedBy = ctx.user.id;
+        claim.decidedAt = nowISO();
+        ctx.db.save(data);
+        redirect(ctx.res, '/manager/requests', { type: 'error', message: 'That shift is no longer available.' });
+        return;
+      }
+      shift.userId = claim.userId;
+      claim.status = 'approved';
+      // Anyone else who'd also asked for this same shift gets auto-declined
+      // now that it's filled.
+      data.shiftClaims
+        .filter((c) => c.shiftId === claim.shiftId && c.status === 'pending' && c.id !== claim.id)
+        .forEach((c) => {
+          c.status = 'declined';
+          c.decidedBy = ctx.user.id;
+          c.decidedAt = nowISO();
+        });
+    } else {
+      claim.status = 'declined';
+    }
+    claim.decidedBy = ctx.user.id;
+    claim.decidedAt = nowISO();
+    ctx.db.save(data);
+    redirect(ctx.res, '/manager/requests', {
+      type: 'success',
+      message: action === 'approve' ? 'Shift assigned.' : 'Request declined.',
+    });
   });
 
   router.post('/manager/requests/:id', (ctx) => {

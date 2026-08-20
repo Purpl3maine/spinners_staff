@@ -81,6 +81,23 @@ async function handle(req, res) {
     return;
   }
 
+  // Served at the root (not /static/sw.js) so its default scope covers the
+  // whole app — a service worker registered from a subpath can only ever
+  // control pages under that subpath unless the server sends a
+  // Service-Worker-Allowed header, which is easy to forget. Root-scoping it
+  // this way avoids that footgun entirely.
+  if (pathname === '/sw.js') {
+    const swPath = path.join(STATIC_DIR, 'sw.js');
+    if (fs.existsSync(swPath)) {
+      res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Service-Worker-Allowed': '/' });
+      fs.createReadStream(swPath).pipe(res);
+    } else {
+      res.writeHead(404);
+      res.end('Not found');
+    }
+    return;
+  }
+
   if (pathname.startsWith('/static/')) {
     if (serveStatic(req, res, pathname)) return;
     res.writeHead(404);
@@ -174,3 +191,11 @@ server.listen(PORT, () => {
   console.log(`Demo manager login: manager@pub.local / manager123`);
   console.log(`Demo staff login:   sam@pub.local / staff123`);
 });
+
+// Checks every minute for anyone who should get a clock-in/out reminder
+// push. Cheap no-op when nobody has an active shift right now or nobody's
+// opted into reminders — see lib/reminders.js.
+const { runReminderSweep } = require('./lib/reminders');
+setInterval(() => {
+  runReminderSweep(db).catch((err) => console.error('[reminders] sweep failed:', err.message));
+}, 60 * 1000);

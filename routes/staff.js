@@ -38,6 +38,9 @@ module.exports = function (router) {
           .join('')
       : '<li class="muted">No shift scheduled today.</li>';
 
+    const hasPushSubscription = (ctx.user.pushSubscriptions || []).length > 0;
+    const vapidPublicKey = (data.settings.vapid && data.settings.vapid.publicKey) || '';
+
     const body = `
       <div class="page-head"><h1>Hi ${escapeHtml(ctx.user.name.split(' ')[0])} 👋</h1></div>
       <div class="card clock-card">
@@ -57,8 +60,49 @@ module.exports = function (router) {
       <div class="card">
         <h2>Today's shift</h2>
         <ul class="list-plain">${shiftHtml}</ul>
+      </div>
+      <div class="card" data-push-card style="display:none;">
+        <div class="card-header"><h2>Clock reminders</h2></div>
+        <p class="muted mt-0">Get a notification on this device shortly before your shift starts if you haven't
+          clocked in, and shortly after it ends if you haven't clocked out.</p>
+        <button type="button" class="btn" data-push-toggle data-subscribed="${hasPushSubscription}" data-vapid-key="${escapeHtml(vapidPublicKey)}">
+          ${hasPushSubscription ? '🔔 Reminders on — tap to turn off' : '🔔 Enable clock reminders'}
+        </button>
       </div>`;
     sendHtml(ctx, { title: 'Clock', activePath: '/staff', body });
+  });
+
+  router.post('/staff/push-subscribe', (ctx) => {
+    if (requireRole(ctx, 'staff')) return;
+    const sub = ctx.body || {};
+    if (!sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+      ctx.res.writeHead(400, { 'Content-Type': 'application/json' });
+      ctx.res.end(JSON.stringify({ ok: false, error: 'Invalid subscription' }));
+      return;
+    }
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.user.id);
+    u.pushSubscriptions = u.pushSubscriptions || [];
+    // Re-subscribing (e.g. after clearing site data) can produce the same
+    // endpoint again — replace rather than duplicate.
+    u.pushSubscriptions = u.pushSubscriptions.filter((s) => s.endpoint !== sub.endpoint);
+    u.pushSubscriptions.push({ endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth }, addedAt: nowISO() });
+    ctx.db.save(data);
+    ctx.res.writeHead(200, { 'Content-Type': 'application/json' });
+    ctx.res.end(JSON.stringify({ ok: true }));
+  });
+
+  router.post('/staff/push-unsubscribe', (ctx) => {
+    if (requireRole(ctx, 'staff')) return;
+    const { endpoint } = ctx.body || {};
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.user.id);
+    if (u) {
+      u.pushSubscriptions = (u.pushSubscriptions || []).filter((s) => s.endpoint !== endpoint);
+      ctx.db.save(data);
+    }
+    ctx.res.writeHead(200, { 'Content-Type': 'application/json' });
+    ctx.res.end(JSON.stringify({ ok: true }));
   });
 
   router.post('/staff/clock', (ctx) => {
@@ -98,7 +142,43 @@ module.exports = function (router) {
       .filter((s) => s.userId === ctx.user.id && s.published && s.date >= today)
       .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
 
+    const openShifts = data.shifts
+      .filter((s) => !s.userId && s.published && s.date >= today)
+      .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+    const myClaims = (data.shiftClaims || []).filter((c) => c.userId === ctx.user.id && c.status === 'pending');
+    const claimedShiftIds = new Set(myClaims.map((c) => c.shiftId));
+
     let body = `<div class="page-head"><h1>My schedule</h1></div>`;
+
+    if (openShifts.length) {
+      const openRows = openShifts
+        .map((s) => {
+          const requested = claimedShiftIds.has(s.id);
+          return `<li>
+            <div class="row" style="align-items:center;">
+              <div>
+                <strong>${escapeHtml(dayLabel(s.date))}</strong> ${escapeHtml(s.start)}–${escapeHtml(s.end)} · ${escapeHtml(s.role)}
+                ${s.notes ? `<div class="muted">${escapeHtml(s.notes)}</div>` : ''}
+              </div>
+              ${requested
+                ? `<form method="POST" action="/staff/shift-claims/${myClaims.find((c) => c.shiftId === s.id).id}/cancel">
+                    <button type="submit" class="link-btn-plain">Requested — cancel?</button>
+                  </form>`
+                : `<form method="POST" action="/staff/shift-claims">
+                    <input type="hidden" name="shiftId" value="${s.id}">
+                    <button type="submit" class="btn btn-sm">Request this shift</button>
+                  </form>`}
+            </div>
+          </li>`;
+        })
+        .join('');
+      body += `<div class="card">
+        <h2>Open shifts</h2>
+        <p class="muted mt-0">Nobody's assigned to these yet — request one and your manager will approve or decline it.</p>
+        <ul class="list-plain">${openRows}</ul>
+      </div>`;
+    }
+
     if (!upcoming.length) {
       body += `<div class="card"><p class="empty-state">No upcoming shifts published yet. Check back once the rota's out.</p></div>`;
     } else {
@@ -117,6 +197,48 @@ module.exports = function (router) {
       }
     }
     sendHtml(ctx, { title: 'Schedule', activePath: '/staff/schedule', body });
+  });
+
+  router.post('/staff/shift-claims', (ctx) => {
+    if (requireRole(ctx, 'staff')) return;
+    const { shiftId } = ctx.body || {};
+    const data = ctx.db.load();
+    const shift = data.shifts.find((s) => s.id === shiftId);
+    if (!shift || shift.userId || !shift.published) {
+      redirect(ctx.res, '/staff/schedule', { type: 'error', message: 'That shift is no longer open.' });
+      return;
+    }
+    data.shiftClaims = data.shiftClaims || [];
+    const alreadyRequested = data.shiftClaims.some((c) => c.shiftId === shiftId && c.userId === ctx.user.id && c.status === 'pending');
+    if (alreadyRequested) {
+      redirect(ctx.res, '/staff/schedule', { type: 'info', message: "You've already requested that shift." });
+      return;
+    }
+    data.shiftClaims.push({
+      id: uuid(),
+      shiftId,
+      userId: ctx.user.id,
+      status: 'pending',
+      requestedAt: nowISO(),
+      decidedBy: null,
+      decidedAt: null,
+    });
+    ctx.db.save(data);
+    redirect(ctx.res, '/staff/schedule', { type: 'success', message: "Request sent — you'll see it here once your manager decides." });
+  });
+
+  router.post('/staff/shift-claims/:id/cancel', (ctx) => {
+    if (requireRole(ctx, 'staff')) return;
+    const data = ctx.db.load();
+    data.shiftClaims = data.shiftClaims || [];
+    const before = data.shiftClaims.length;
+    data.shiftClaims = data.shiftClaims.filter((c) => !(c.id === ctx.params.id && c.userId === ctx.user.id && c.status === 'pending'));
+    const removed = data.shiftClaims.length < before;
+    ctx.db.save(data);
+    redirect(ctx.res, '/staff/schedule', {
+      type: removed ? 'success' : 'error',
+      message: removed ? 'Request cancelled.' : 'Request not found.',
+    });
   });
 
   // ---------------- Timesheet ----------------

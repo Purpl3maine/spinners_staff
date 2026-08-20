@@ -293,6 +293,81 @@
     });
   }
 
+  // Clock in/out reminder push notifications: reveal the opt-in card only
+  // if the browser actually supports push (iOS Safari in a normal tab
+  // doesn't, for example — only once added to the Home Screen), then wire
+  // up subscribe/unsubscribe.
+  var pushCard = document.querySelector('[data-push-card]');
+  var pushToggle = document.querySelector('[data-push-toggle]');
+  if (pushCard && pushToggle && 'serviceWorker' in navigator && 'PushManager' in window) {
+    pushCard.style.display = '';
+
+    function urlBase64ToUint8Array(base64String) {
+      var padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+      var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      var rawData = window.atob(base64);
+      var outputArray = new Uint8Array(rawData.length);
+      for (var i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+      return outputArray;
+    }
+
+    pushToggle.addEventListener('click', function () {
+      var subscribed = pushToggle.getAttribute('data-subscribed') === 'true';
+      pushToggle.disabled = true;
+
+      if (subscribed) {
+        navigator.serviceWorker.ready
+          .then(function (reg) {
+            return reg.pushManager.getSubscription();
+          })
+          .then(function (sub) {
+            if (!sub) return null;
+            var endpoint = sub.endpoint;
+            return sub.unsubscribe().then(function () {
+              return fetch('/staff/push-unsubscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'endpoint=' + encodeURIComponent(endpoint),
+              });
+            });
+          })
+          .then(function () {
+            window.location.reload();
+          })
+          .catch(function () {
+            pushToggle.disabled = false;
+          });
+        return;
+      }
+
+      navigator.serviceWorker
+        .register('/sw.js')
+        .then(function () {
+          return navigator.serviceWorker.ready;
+        })
+        .then(function (reg) {
+          return reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(pushToggle.getAttribute('data-vapid-key')),
+          });
+        })
+        .then(function (sub) {
+          return fetch('/staff/push-subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sub),
+          });
+        })
+        .then(function () {
+          window.location.reload();
+        })
+        .catch(function () {
+          pushToggle.disabled = false;
+          window.alert("Couldn't turn on reminders — check that notifications aren't blocked for this site in your browser settings, then try again.");
+        });
+    });
+  }
+
   // Show/hide fields tagged data-paytype-field="hourly"/"salary" based on a
   // nearby <select name="payType">, so only the relevant pay fields show.
   document.querySelectorAll('select[name="payType"]').forEach(function (sel) {

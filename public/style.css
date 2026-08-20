@@ -288,6 +288,10 @@ tr[data-user-id].row-drag-over { outline: 2px dashed var(--green-700); outline-o
 .dept-accent-5 { border-left: 4px solid var(--dept-5-fg); }
 .dept-accent-6 { border-left: 4px solid var(--dept-6-fg); }
 .dept-accent-7 { border-left: 4px solid var(--dept-7-fg); }
+.open-shifts-header td { background: #fdf1de; color: var(--amber-600); }
+.open-shifts-row td:first-child { border-left: 4px solid var(--amber-500); }
+.open-shift-chip { background: #fdf1de; color: var(--amber-600); border: 1px dashed var(--amber-500); }
+.open-shift-chip .badge-pending { margin-left: 0.3rem; }
 .rota-cell { min-height: 56px; transition: background 0.1s ease; }
 .rota-cell.drag-over { background: var(--green-100); outline: 2px dashed var(--green-700); outline-offset: -2px; }
 .shift-chip-wrap { position: relative; display: flex; align-items: stretch; gap: 0.2rem; margin-bottom: 0.3rem; cursor: grab; }
