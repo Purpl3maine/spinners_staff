@@ -170,6 +170,21 @@
         .catch(done);
     }
 
+    // When a drag or paste hands a shift to a DIFFERENT staff member than it
+    // started with, the role/section should switch to reflect the new
+    // person's own position (e.g. dragging a "Kitchen" shift onto a
+    // bartender shouldn't leave it labelled "Kitchen") rather than carrying
+    // over the original person's role. Only kicks in when the person
+    // actually changes — moving your own shift to another day, or an open
+    // (unassigned) shift with no target person, keeps its original role
+    // untouched, since that's not a reassignment.
+    function roleForTarget(sourceUserId, sourceRole, targetUserId) {
+      if (!targetUserId || targetUserId === sourceUserId) return sourceRole;
+      var row = document.querySelector('tr[data-user-id="' + targetUserId + '"]');
+      var position = row ? row.getAttribute('data-position') : '';
+      return position ? position : sourceRole;
+    }
+
     document.querySelectorAll('.chip-copy-btn').forEach(function (btn) {
       btn.addEventListener('click', function (e) {
         e.preventDefault();
@@ -190,14 +205,15 @@
         // offers a one-time paste rather than staying available to spam
         // the same shift onto multiple days.
         clearClipboard();
+        var pasteTargetUserId = btn.getAttribute('data-userid');
         postShift(
           {
-            userId: btn.getAttribute('data-userid'),
+            userId: pasteTargetUserId,
             date: btn.getAttribute('data-date'),
             week: rotaWeek,
             start: clip.start,
             end: clip.end,
-            role: clip.role,
+            role: roleForTarget(clip.userId, clip.role, pasteTargetUserId),
             breakMinutes: clip.breakMinutes || 0,
             notes: clip.notes || '',
           },
@@ -254,7 +270,7 @@
             week: rotaWeek,
             start: shift.start,
             end: shift.end,
-            role: shift.role,
+            role: roleForTarget(shift.userId, shift.role, targetUserId),
             breakMinutes: shift.breakMinutes || 0,
             notes: shift.notes || '',
           },

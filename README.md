@@ -123,7 +123,11 @@ Both levels see the same set of pages:
   to move it (native drag-and-drop — desktop only, on a phone/tablet just
   tap the shift to edit it as before); **copy a shift** with the small ⧉
   button and **paste** it onto any "+ Add shift"/"📋 Paste shift" cell to
-  duplicate it; and **save a week as a template** (or apply a saved one to
+  duplicate it. Dragging or pasting a shift onto a **different** staff
+  member automatically updates its role/section to that person's own
+  position (e.g. a "Kitchen" shift dragged onto a bartender becomes "Bar")
+  — moving your own shift to a different day, same person, leaves the role
+  exactly as it was; and **save a week as a template** (or apply a saved one to
   the week you're viewing) from the Templates card underneath the grid —
   applying a template only fills in shifts for people who don't already
   have one that day, so it's safe to reapply without creating duplicates.
@@ -155,7 +159,13 @@ Both levels see the same set of pages:
   **edit**, or remove clock events by hand, no location check. Useful when
   the location check isn't working for someone, or to fix a mistake (e.g.
   they forgot to clock in/out and their timesheet looks wrong) — the
-  Timesheets page links each person's name straight to this.
+  Timesheets page links each person's name straight to this. Whenever
+  someone's currently clocked in, a one-click **Force clock out** button
+  appears next to their status (on their own staff page, and on the
+  Dashboard's "On shift now" list) — clocks them out right now for when
+  they've simply forgotten, without needing to know or type the exact time
+  like the manual entry form. Like any manual entry, it still needs
+  approving before payroll.
 - Approve or decline open shift requests, and approve or deny time-off
   requests, both from the **Requests** page
 - **Holiday page**: everyone's balance at a glance (accrued/allowance, taken,

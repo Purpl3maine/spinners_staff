@@ -103,7 +103,19 @@ module.exports = function (router) {
     const shiftsThisWeek = data.shifts.filter((s) => s.date >= weekStart && s.date <= weekEnd).length;
 
     const onShiftHtml = onShift.length
-      ? onShift.map((x) => `<li><strong>${escapeHtml(x.user.name)}</strong> <span class="muted">(${escapeHtml(x.user.position)})</span> — since ${fmtTimeLabel(x.status.since)}</li>`).join('')
+      ? onShift
+          .map(
+            (x) => `<li>
+              <div class="row" style="align-items:center;">
+                <div><strong>${escapeHtml(x.user.name)}</strong> <span class="muted">(${escapeHtml(x.user.position)})</span> — since ${fmtTimeLabel(x.status.since)}</div>
+                <form method="POST" action="/manager/staff/${x.user.id}/clock/force-out" data-confirm="Clock ${escapeHtml(x.user.name)} out now? Use this when they've forgotten to clock out themselves.">
+                  <input type="hidden" name="back" value="dashboard">
+                  <button type="submit" class="link-btn-plain">Force clock out</button>
+                </form>
+              </div>
+            </li>`
+          )
+          .join('')
       : '<li class="muted">Nobody is clocked in right now.</li>';
 
     const pendingItems = [
@@ -552,10 +564,19 @@ module.exports = function (router) {
     const body = `
       <div class="page-head"><h1>${escapeHtml(u.name)}</h1></div>
       <div class="card">
-        <div class="card-header"><h2>Clock in/out</h2><span class="badge badge-${status.clockedIn ? 'in' : 'out'}">${status.clockedIn ? 'Clocked in' : 'Clocked out'}</span></div>
+        <div class="card-header">
+          <h2>Clock in/out</h2>
+          <div class="row" style="align-items:center;gap:0.5rem;">
+            <span class="badge badge-${status.clockedIn ? 'in' : 'out'}">${status.clockedIn ? 'Clocked in' : 'Clocked out'}</span>
+            ${status.clockedIn ? `<form method="POST" action="/manager/staff/${u.id}/clock/force-out" data-confirm="Clock ${escapeHtml(u.name)} out now? Use this when they've forgotten to clock out themselves.">
+              <button type="submit" class="btn btn-sm btn-danger">Force clock out</button>
+            </form>` : ''}
+          </div>
+        </div>
         <p class="muted mt-0">Normally staff clock themselves in/out from their phone, which checks they're at the
           pub. Use this if that's not working for them (e.g. a GPS/location issue) or to fix a mistake — it skips
-          the location check.</p>
+          the location check. <strong>Force clock out</strong> above clocks them out right now, for when they've
+          simply forgotten — like any manual entry it still needs approving before payroll.</p>
         <form method="POST" action="/manager/staff/${u.id}/clock" class="stack">
           <div class="row">
             <label>Type
@@ -816,6 +837,47 @@ module.exports = function (router) {
     data.clockEvents.push(event);
     ctx.db.save(data);
     redirect(ctx.res, `/manager/staff/${u.id}`, { type: 'success', message: `Manual clock ${type === 'in' ? 'in' : 'out'} added for ${u.name}.` });
+  });
+
+  // One-click "they forgot to clock out" fix — clocks someone out right now
+  // rather than a manager having to know/type the exact time via the manual
+  // entry form above. Only does anything if they're actually still clocked
+  // in. Reachable from both the staff page and the Dashboard's "On shift
+  // now" list (via the "back" field, so it returns you to wherever you came
+  // from) — still needs approving before payroll, same as any manual entry.
+  router.post('/manager/staff/:id/clock/force-out', (ctx) => {
+    if (requireRole(ctx, 'manager')) return;
+    const data = ctx.db.load();
+    const u = data.users.find((x) => x.id === ctx.params.id);
+    const back = ctx.body && ctx.body.back === 'dashboard' ? '/manager' : `/manager/staff/${ctx.params.id}`;
+    if (!u) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Staff member not found.' });
+      return;
+    }
+    if (!canManageUser(ctx.user, u)) {
+      redirect(ctx.res, '/manager/staff', { type: 'error', message: 'Only the owner can manage manager accounts.' });
+      return;
+    }
+    const status = currentStatus(data, u.id);
+    if (!status.clockedIn) {
+      redirect(ctx.res, back, { type: 'info', message: `${u.name} isn't currently clocked in — nothing to do.` });
+      return;
+    }
+    const now = nowISO();
+    data.clockEvents.push({
+      id: uuid(),
+      userId: u.id,
+      type: 'out',
+      timestamp: now,
+      source: 'manual',
+      addedBy: ctx.user.id,
+      approved: false,
+    });
+    ctx.db.save(data);
+    redirect(ctx.res, back, {
+      type: 'success',
+      message: `Clocked ${u.name} out at ${fmtTimeLabel(now)}. Needs approving before payroll, like any manual entry.`,
+    });
   });
 
   router.post('/manager/staff/:id/clock/:eventId/delete', (ctx) => {
@@ -1281,7 +1343,7 @@ module.exports = function (router) {
             const scheduledCost = isSalary ? (u.annualSalary || 0) / 52 : scheduledHours * (u.hourlyRate || 0);
             const shiftCount = memberShifts.length;
             const summaryLine = `<div class="muted rota-summary">${fmtHours(scheduledHours)} hrs · ${fmtMoney(scheduledCost)}${isSalary ? ' (salaried)' : ''} · ${shiftCount} shift${shiftCount === 1 ? '' : 's'}</div>`;
-            return `<tr data-user-id="${u.id}" data-department-id="${group.dept ? group.dept.id : ''}"><td class="${accentClass}"><span class="row-drag-handle" draggable="true" title="Drag to reorder">⋮⋮</span><strong>${escapeHtml(u.name)}</strong><div class="muted">${escapeHtml(u.position)}</div>
+            return `<tr data-user-id="${u.id}" data-department-id="${group.dept ? group.dept.id : ''}" data-position="${escapeHtml(u.position || '')}"><td class="${accentClass}"><span class="row-drag-handle" draggable="true" title="Drag to reorder">⋮⋮</span><strong>${escapeHtml(u.name)}</strong><div class="muted">${escapeHtml(u.position)}</div>
               ${summaryLine}
               <form method="POST" action="/manager/rota/staff/${u.id}/hide" class="no-print" data-confirm="Remove ${escapeHtml(u.name)} from the rota grid? Their account and shifts already assigned are unaffected — you can add them back any time.">
                 <input type="hidden" name="week" value="${weekStart}">
