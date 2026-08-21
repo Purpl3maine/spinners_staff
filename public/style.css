@@ -8,6 +8,8 @@
   --red-100: #fbe7e4;
   --blue-100: #e7f0fb;
   --blue-600: #2563eb;
+  --violet-100: #f3e5f5;
+  --violet-700: #6a1b9a;
   --cream: #f4f8f8;
   --ink: #212a29;
   --muted: #667372;
@@ -269,6 +271,12 @@ tfoot td { font-weight: 700; border-top: 2px solid var(--line); border-bottom: n
 .avail-yes { background: var(--green-100); color: var(--green-900); }
 .avail-no { background: var(--red-100); color: var(--red-500); }
 .rota-cell-unavailable { background: #fdf3f2; }
+
+/* An approved holiday/sick/other leave request, shown automatically on the
+   rota grid — informational only (like availability), doesn't block a shift
+   being added the same day. Not a link/draggable, unlike a real shift chip,
+   since it's derived from the Requests page rather than editable here. */
+.leave-chip { font-size: 0.78rem; font-weight: 700; border-radius: 8px; padding: 0.3rem 0.45rem; margin-bottom: 0.3rem; background: var(--violet-100); color: var(--violet-700); }
 
 /* ---------- Rota grid ---------- */
 .rota-grid { border-collapse: collapse; width: 100%; min-width: 720px; }

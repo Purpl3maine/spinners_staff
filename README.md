@@ -110,7 +110,10 @@ Both levels see the same set of pages:
   **scheduled hours, estimated cost and shift count** for the week you're
   viewing — a quick at-a-glance check while you're building it, similar to
   Planday. The date header row **stays visible while you scroll** down a
-  busy week. Each row has a "Remove from rota" link for
+  busy week. **Approved holiday/sick/other leave shows automatically** as a
+  🌴/🤒/📋 chip on the relevant day/person, pulled straight from their
+  approved time-off requests — nothing extra to add, and it won't stop you
+  scheduling a shift on the same day if you need to. Each row has a "Remove from rota" link for
   staff you don't need to schedule (e.g. an admin-only account) — it just
   hides them from the grid, their account keeps working normally, and
   there's a one-click "+ Add to rota" to bring them back. Managers show up

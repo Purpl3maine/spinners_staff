@@ -1173,6 +1173,30 @@ module.exports = function (router) {
       return { cellClass: '', html: `<div class="avail-tag avail-yes">✓ Available${times}${note}</div>` };
     }
 
+    // Approved time-off requests that overlap this week, so a "Holiday" (or
+    // Sick/Leave) block can show automatically on the rota grid — no extra
+    // manual step, and there's only one place holiday gets recorded (the
+    // Requests page) so balances stay accurate. Purely informational, like
+    // availability: it doesn't stop a shift being added on the same day.
+    const LEAVE_LABELS = { holiday: { label: 'Holiday', icon: '🌴' }, sick: { label: 'Sick', icon: '🤒' }, other: { label: 'Leave', icon: '📋' } };
+    const leaveByUser = {};
+    (data.timeOffRequests || [])
+      .filter((r) => r.status === 'approved' && r.startDate <= weekEnd && r.endDate >= weekStart)
+      .forEach((r) => {
+        for (const d of days) {
+          if (d >= r.startDate && d <= r.endDate) {
+            (leaveByUser[r.userId] = leaveByUser[r.userId] || {})[d] = r;
+          }
+        }
+      });
+
+    function leaveTag(userId, date) {
+      const r = leaveByUser[userId] && leaveByUser[userId][date];
+      if (!r) return '';
+      const meta = LEAVE_LABELS[r.type] || LEAVE_LABELS.other;
+      return `<div class="leave-chip">${meta.icon} ${escapeHtml(meta.label)}</div>`;
+    }
+
     const headerRow = `<tr><th>Staff</th>${days.map((d) => `<th>${escapeHtml(dayLabel(d))}</th>`).join('')}</tr>`;
 
     // Group staff by department (in the order departments were created),
@@ -1241,7 +1265,8 @@ module.exports = function (router) {
                   })
                   .join('');
                 const avail = availabilityTag(u.id, d);
-                return `<td class="rota-cell${avail.cellClass}" data-userid="${u.id}" data-date="${d}">${avail.html}${chips}<a class="add-shift-link" href="/manager/rota/shift?userId=${u.id}&date=${d}&week=${weekStart}">+ Add shift</a><button type="button" class="paste-shift-btn" style="display:none;" data-userid="${u.id}" data-date="${d}">📋 Paste shift</button></td>`;
+                const leave = leaveTag(u.id, d);
+                return `<td class="rota-cell${avail.cellClass}" data-userid="${u.id}" data-date="${d}">${leave}${avail.html}${chips}<a class="add-shift-link" href="/manager/rota/shift?userId=${u.id}&date=${d}&week=${weekStart}">+ Add shift</a><button type="button" class="paste-shift-btn" style="display:none;" data-userid="${u.id}" data-date="${d}">📋 Paste shift</button></td>`;
               })
               .join('');
             // Small weekly summary under the name — scheduled hours, break-
